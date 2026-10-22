@@ -1,0 +1,6 @@
+# Normalize text files to LF in the repository and in every checkout,
+# so Windows, macOS and WSL clones match.
+* text=auto eol=lf
+
+*.png binary
+*.pdf binary
