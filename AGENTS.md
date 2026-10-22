@@ -22,24 +22,36 @@ system.
 - **No secrets in the repo.** API keys go in `.env` (ignored) or the
   deployment's secrets, never in code or commits.
 
-## Layout (planned; update this section when it changes)
+## Layout (update this section when it changes)
 
 ```
-src/htn_alert/        core logic: reading checks, episodes, generator, evaluation
-app/                  the demo app
+src/htn_alert/        core logic
+  contract.py         shared data types: Reading, Action, Event
+  protocol.py         loads config/protocol.toml
+  rules.py            checks on a single reading
+  episodes.py         per-patient episode logic: readings and actions in, events out
+  generator.py        synthetic patients, readings and staff actions
+  evaluate.py         metrics over event streams
+app/                  the demo app (planned)
 tests/                pytest tests
 config/protocol.toml  clinical thresholds, repeat window, escalation times
 ```
 
+- **The data flow is fixed:** the generator produces Readings and Actions, the
+  episode logic turns them into Events, and the app and evaluation consume
+  Events. Add fields and kinds to `contract.py`; don't change the meaning of
+  existing ones without asking.
 - Keep the core logic independent of the app, so it can be tested directly.
 - **Clinical and timing values live in `config/protocol.toml`, not in code.**
   Each value gets a comment naming its source: pitch team, literature, or
   assumption. Until the pitch team confirms a value, treat it as an assumption.
 
-## Setup (once `pyproject.toml` exists)
+## Setup
+
+Python 3.12, managed by uv. Commit `uv.lock` whenever dependencies change.
 
 ```
-uv sync          # create the environment
+uv sync          # create the environment from the lockfile
 uv run pytest    # run the tests
 ```
 

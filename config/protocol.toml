@@ -1,0 +1,40 @@
+# Clinical and timing values for the episode logic.
+#
+# Every value names its source:
+#   Lit     published literature (cited)
+#   Pitch   the pitch team's description of their unit
+#   Assume  our assumption, to vary in sensitivity analysis
+#
+# Until the pitch team confirms a value, treat it as an assumption.
+# Ask the team before changing a value here (see AGENTS.md).
+
+[severe]
+# Severe range: systolic >= 160 OR diastolic >= 110 mmHg.
+# Lit: ACOG, as used by Martin et al. 2021 (Loma Linda, PMC7813439) and the
+# ETSU chart review (Watson 2026).
+systolic = 160
+diastolic = 110
+
+[repeat]
+# A repeat severe reading at least this long after the first confirms persistence.
+# Lit: both studies above. Pitch: to confirm.
+min_minutes = 15
+# Latest a repeat still counts toward the same episode.
+# Lit: ETSU accepts two severe readings 15-60 minutes apart. Assume: Mosaic matches.
+max_minutes = 60
+
+[treatment]
+# Time-to-treatment target, counted from confirmation.
+# Pitch: 60-minute national standard. Clock start from confirmation: Lit (both
+# studies), Pitch to confirm.
+target_minutes = 60
+
+[escalation]
+# Escalate when the provider hasn't acknowledged within this long of confirmation.
+# Assume: no source yet.
+unacknowledged_minutes = 10
+
+[episode]
+# Close an episode after readings stay below the severe range this long.
+# Lit: Loma Linda used 120 minutes.
+close_after_minutes = 120
