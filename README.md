@@ -19,6 +19,12 @@ uv sync          # create the environment from the lockfile
 uv run pytest    # run the tests
 ```
 
+New to the project? Work through the [onboarding checklist](docs/onboarding.md).
+
+## Builders
+
+- Daniel Evans (Data Science), build lead
+
 ## Status
 
 Scaffold: the shared data contract (`src/htn_alert/contract.py`), the protocol
