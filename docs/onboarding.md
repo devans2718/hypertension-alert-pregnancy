@@ -73,3 +73,18 @@ git push -u origin <your-name>/add-to-builders
 - [ ] **Merge it**, then update your copy: `git switch main` and `git pull`.
 
 You're ready to work.
+
+## How we work
+
+Your agent follows [AGENTS.md](../AGENTS.md). These are the matching
+conventions for people:
+
+- **Commit your own work from your own account.** The course grades individual
+  contributions, and the commit history is the record.
+- **Review what your agent wrote before it's committed.** You're responsible
+  for everything in your commits, whoever typed it.
+- **Agents open pull requests as drafts.** Mark one **Ready for review** only
+  after you've reviewed it; that click is the review record.
+- **Add to the pull request description what you changed or rejected** from
+  the agent's work. With the agent's note on what it did, this is the
+  Human–AI Co-Design evidence for the course report.

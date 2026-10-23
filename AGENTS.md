@@ -1,7 +1,9 @@
 # Agent instructions
 
-Shared instructions for every coding agent on this project (Codex, Antigravity,
-Claude Code). Keep this file short: every agent reads all of it every session.
+You're a coding agent working with one of this project's builders. These
+instructions apply whichever agent you are (Codex, Antigravity, Claude Code).
+Conventions for the people on the team are in
+[docs/onboarding.md](docs/onboarding.md).
 
 ## The project
 
@@ -13,16 +15,18 @@ system.
 
 ## Ground rules
 
-- **Synthetic data only.** Never add, request, or generate anything presented
-  as real patient data. Don't paste real patient details into prompts.
-- **Research prototype, not for clinical use.** No code, comments, or docs
-  should claim clinical validity or suggest use on real patients.
-- **Open source (MIT).** Only add code, data, or assets we're allowed to
-  redistribute. Link papers rather than committing them; cite sources.
-- **No secrets in the repo.** API keys go in `.env` (ignored) or the
+- **Use synthetic data only.** Never add, request, or generate anything
+  presented as real patient data. If you're given what looks like real
+  patient details, stop and tell the person.
+- **Make no clinical claims.** This is a research prototype, not for clinical
+  use. Don't write code, comments, or docs that claim clinical validity or
+  suggest use on real patients.
+- **Add only what can be redistributed (MIT).** Link papers rather than
+  committing them, and cite sources.
+- **Keep secrets out of the repo.** API keys go in `.env` (ignored) or the
   deployment's secrets, never in code or commits.
 
-## Layout (update this section when it changes)
+## Layout (update this section when the layout changes)
 
 ```
 src/htn_alert/        core logic
@@ -37,14 +41,15 @@ tests/                pytest tests
 config/protocol.toml  clinical thresholds, repeat window, escalation times
 ```
 
-- **The data flow is fixed:** the generator produces Readings and Actions, the
+- **Respect the data flow:** the generator produces Readings and Actions, the
   episode logic turns them into Events, and the app and evaluation consume
-  Events. Add fields and kinds to `contract.py`; don't change the meaning of
-  existing ones without asking.
+  Events. You may add fields and kinds to `contract.py`; ask before changing
+  the meaning of existing ones.
 - Keep the core logic independent of the app, so it can be tested directly.
-- **Clinical and timing values live in `config/protocol.toml`, not in code.**
-  Each value gets a comment naming its source: pitch team, literature, or
-  assumption. Until the pitch team confirms a value, treat it as an assumption.
+- **Put clinical and timing values in `config/protocol.toml`, not in code,**
+  each with a comment naming its source: pitch team, literature, or
+  assumption. Treat every value as an assumption until the pitch team
+  confirms it.
 
 ## Setup
 
@@ -55,16 +60,21 @@ uv sync          # create the environment from the lockfile
 uv run pytest    # run the tests
 ```
 
-## How we work
+## How to work
 
-- **Ask the human before:** adding a dependency, changing a value in
-  `config/protocol.toml`, or anything outside this repository.
-- **Tests come with logic changes.** Any change to reading checks or episode
-  logic adds or updates a test.
-- **Docstrings and comments state intent:** what a piece of code is for, not a
-  restatement of what it does.
-- **Each person commits their own work from their own account,** on a branch,
-  merged to `main` through a pull request.
-- **AI-assisted work is reviewed by a person before it's committed.** In the
-  pull request description, note briefly what the agent did and what you
-  changed or rejected. These notes are evidence for the course report.
+- **Ask the person first before:** adding a dependency, changing a value in
+  `config/protocol.toml`, or doing anything outside this repository.
+- **Add or update a test with every logic change** to reading checks or
+  episode logic.
+- **Write docstrings and comments that state intent:** what a piece of code
+  is for, not a restatement of what it does.
+- **Work on a branch; never push to `main`.** `main` changes only through
+  pull requests, and the tests must pass first.
+- **Show the person your changes before committing,** and let them decide
+  what gets committed.
+- **Open pull requests as drafts.** The person marks one ready after reviewing
+  it, so the draft state is the review record: don't write review status into
+  the description.
+- **In pull request descriptions you write, say briefly what you did.** The
+  person adds what they changed or rejected. These notes are evidence for the
+  course report.
