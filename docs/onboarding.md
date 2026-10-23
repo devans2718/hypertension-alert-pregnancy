@@ -17,9 +17,11 @@ That's what this is for.
 
 - [ ] **Git.** *Check:* `git --version` prints a version.
       Windows: `winget install --id Git.Git -e`. macOS: `xcode-select --install`.
-- [ ] **Git signed in to GitHub.** On Windows, Git Credential Manager (included
-      with Git) opens a browser the first time you push. Alternatively, install
-      the [GitHub CLI](https://cli.github.com/) and run `gh auth login`.
+- [ ] **GitHub CLI, signed in.** Your agent uses it to work with pull requests
+      and issues. Install the [GitHub CLI](https://cli.github.com/), then run
+      `gh auth login` and answer yes when it offers to authenticate Git with
+      your GitHub credentials. *Check:* `gh auth status` shows you logged in.
+      Windows: `winget install --id GitHub.cli -e`. macOS: `brew install gh`.
 - [ ] **uv.** *Check:* `uv --version` prints a version. Close and reopen your
       terminal (and your agent) after installing, so it's on your PATH.
       - Windows (PowerShell): `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
