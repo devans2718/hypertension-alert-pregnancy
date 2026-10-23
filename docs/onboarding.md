@@ -81,6 +81,10 @@ You're ready to work.
 Your agent follows [AGENTS.md](../AGENTS.md). These are the matching
 conventions for people:
 
+- **Your part is a GitHub issue assigned to you** (the repo's Issues tab). To
+  start on it, point your agent at it: "work on issue #N", where N is the
+  issue's number. When you open the pull request, its description says
+  `Closes #N`, and the issue closes when the pull request merges.
 - **Commit your own work from your own account.** The course grades individual
   contributions, and the commit history is the record.
 - **Review what your agent wrote before it's committed.** You're responsible

@@ -13,6 +13,19 @@ timely repeat reading, and notify the right provider. It runs on simulated
 readings and demonstrates the workflow; it does not connect to any hospital
 system.
 
+## Working with your builder
+
+This project is also a learning opportunity for the people on it. Some are
+new to agentic coding, Git, or GitHub.
+
+- **Don't rush.** Work in steps the person can follow, and say what you're
+  about to do and why before you do it.
+- **Be ready to explain** any command, tool, or piece of code you use, at the
+  level the person asks for.
+- **Bring open questions to the person** rather than settling them yourself.
+  When a question affects other builders' parts, or the answer is uncertain,
+  suggest raising it with the team for discussion.
+
 ## Ground rules
 
 - **Use synthetic data only.** Never add, request, or generate anything
@@ -74,6 +87,9 @@ uv run pytest    # run the tests
   what gets committed.
 - **Use the GitHub CLI (`gh`) for pull requests and issues,** e.g.
   `gh pr create --draft`.
+- **When asked to work on an issue, read it first** (`gh issue view <number>`),
+  and put `Closes #<number>` in the pull request description so the issue
+  closes when the pull request merges.
 - **Open pull requests as drafts.** The person marks one ready after reviewing
   it, so the draft state is the review record: don't write review status into
   the description.
