@@ -72,6 +72,8 @@ uv run pytest    # run the tests
   pull requests, and the tests must pass first.
 - **Show the person your changes before committing,** and let them decide
   what gets committed.
+- **Use the GitHub CLI (`gh`) for pull requests and issues,** e.g.
+  `gh pr create --draft`.
 - **Open pull requests as drafts.** The person marks one ready after reviewing
   it, so the draft state is the review record: don't write review status into
   the description.
