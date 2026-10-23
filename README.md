@@ -24,6 +24,7 @@ New to the project? Work through the [onboarding checklist](docs/onboarding.md).
 ## Builders
 
 - Daniel Evans (Data Science), build lead
+- Obed Akwasi Aning
 
 ## Status
 
