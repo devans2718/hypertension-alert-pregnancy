@@ -2,12 +2,15 @@
 from datetime import datetime, timedelta
 import pytest
 from htn_alert.contract import Reading
-from htn_alert.generator import SCENARIOS, generate_bp_readings, generate_cohort, summarize_cohort, is_severe
+from htn_alert.generator import SCENARIOS, generate_bp_readings, generate_cohort, summarize_cohort
+from htn_alert.protocol import load_protocol
+from htn_alert.rules import is_severe
 
 START = datetime(2026, 10, 26, 8, 0)
+PROTOCOL = load_protocol()
 
-def make(scenario, seed=42):
-    return generate_bp_readings('P-001', START, scenario=scenario, seed=seed)
+def make(scenario, seed=42, **kwargs):
+    return generate_bp_readings('P-001', START, scenario=scenario, seed=seed, **kwargs)
 
 def test_original_default_13_readings():
     r = make('non_hypertensive')
@@ -32,39 +35,78 @@ def test_chronological_and_patient_id(scenario):
 
 @pytest.mark.parametrize('scenario', ('non_hypertensive', 'mild_hypertension', 'borderline_severe'))
 def test_nosevere_categories(scenario):
-    assert not any(is_severe(x.systolic,x.diastolic) for x in make(scenario))
+    assert not any(is_severe(x, PROTOCOL) for x in make(scenario))
 
 def test_mild_every_reading_hypertensive():
     assert all(x.systolic >= 140 or x.diastolic >= 90 for x in make('mild_hypertension'))
 
 def test_persistent_repeat_at_ten():
     r = make('persistent_severe')
-    severe = [x for x in r if is_severe(x.systolic,x.diastolic)]
+    severe = [x for x in r if is_severe(x, PROTOCOL)]
     assert len(severe) >= 2 and severe[1].time - severe[0].time == timedelta(minutes=10)
 
 def test_transient_normal_repeat():
     r = make('nonpersistent_severe')
-    first = next(i for i,x in enumerate(r) if is_severe(x.systolic,x.diastolic))
+    first = next(i for i,x in enumerate(r) if is_severe(x, PROTOCOL))
     assert r[first+1].time - r[first].time == timedelta(minutes=10)
-    assert not is_severe(r[first+1].systolic,r[first+1].diastolic)
+    assert not is_severe(r[first+1], PROTOCOL)
 
 def test_recurrent_severe():
     r = make('recurrent_severe')
-    severe = [x for x in r if is_severe(x.systolic,x.diastolic)]
+    severe = [x for x in r if is_severe(x, PROTOCOL)]
     assert len(severe) >= 3
     assert severe[-1].time - severe[0].time <= timedelta(minutes=60)
 
-def test_delayed_recheck_has_no_early_reading():
-    for seed,delay in ((42,16),(43,30)):
-        r=make('delayed_or_missing_repeat',seed)
-        first = next(x for x in r if is_severe(x.systolic,x.diastolic))
-        following = next(x for x in r if x.time>first.time)
-        assert following.time-first.time == timedelta(minutes=delay)
-        assert not is_severe(following.systolic,following.diastolic)
+@pytest.mark.parametrize('subtype,delay', [('delayed', 16), ('missing_early', 30)])
+@pytest.mark.parametrize('seed', [42, 43, 120, 121])
+def test_delayed_recheck_has_no_early_reading(subtype, delay, seed):
+    r=make('delayed_or_missing_repeat', seed, delayed_repeat_subtype=subtype)
+    first = next(x for x in r if is_severe(x, PROTOCOL))
+    following = next(x for x in r if x.time>first.time)
+    assert following.time-first.time == timedelta(minutes=delay)
+    assert not is_severe(following, PROTOCOL)
+
+
+@pytest.mark.parametrize('seed', [42, 43])
+def test_default_delayed_subtype_is_seed_independent(seed):
+    assert make('delayed_or_missing_repeat', seed) == make(
+        'delayed_or_missing_repeat', seed, delayed_repeat_subtype='delayed'
+    )
+
+
+@pytest.mark.parametrize('kwargs', [
+    {'scenario': 'delayed_or_missing_repeat', 'delayed_repeat_subtype': 'unknown'},
+    {'scenario': 'persistent_severe', 'delayed_repeat_subtype': 'delayed'},
+])
+def test_invalid_delayed_subtype_rejected(kwargs):
+    with pytest.raises(ValueError, match='subtype'):
+        generate_bp_readings('P-001', START, **kwargs)
+
+
+def test_cohort_subtype_cycle_is_independent_of_seed():
+    for seed in (42, 43):
+        cohort = generate_cohort(patients_per_scenario=2, seed=seed)
+        # The delayed family is seventh; its first two patients use both subtypes.
+        for pid, delay in [('SIM-00013', 30), ('SIM-00014', 16)]:
+            readings = cohort[pid]
+            first = next(r for r in readings if is_severe(r, PROTOCOL))
+            repeat = next(r for r in readings if r.time > first.time)
+            assert repeat.time - first.time == timedelta(minutes=delay)
+
+
+def test_default_cohort_matches_pre_refactor_observations():
+    """Guard every default fixture and RNG draw against accidental model changes."""
+    from hashlib import sha256
+
+    cohort = generate_cohort()
+    # Captured from PR #7 before this config/severity refactor (seed 42).
+    assert sha256(repr(cohort).encode()).hexdigest() == (
+        'b7506e069fe2d084ebdfe9fa6743ccf744110c643128d23bb6f593ee4283efd3'
+    )
 
 def test_spurious_is_ground_truth_only():
     r=make('spurious_severe')
-    assert sum(is_severe(x.systolic,x.diastolic) for x in r) == 1
+    assert sum(is_severe(x, PROTOCOL) for x in r) == 1
     assert not hasattr(r[0], 'is_spurious')
 
 def test_cohort_80_and_summary():

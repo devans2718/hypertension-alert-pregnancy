@@ -1,0 +1,15 @@
+# Synthetic staff delays, not measured Mosaic performance or treatment guidance.
+# All parameters are Assume: the values already used in PR #7.
+# Recognition remains 3–15 minutes here; changing the model is a later issue.
+
+[delays]
+recognition_minutes = [3, 15] # Assume: inclusive uniform delay from first severe BP.
+identification_minutes = [5, 16] # Assume: inclusive uniform provider-finding delay.
+acknowledgment_minutes = [3, 10] # Assume: inclusive uniform acknowledgment delay.
+medication_minutes = [12, 28] # Assume: inclusive uniform delay after acknowledgment.
+collaboration_minutes = [5, 12] # Assume: extra delay on collaboration-required pathway.
+uncertainty_minutes = [8, 18] # Assume: extra provider-finding delay on uncertain pathway.
+readiness_minutes = [0, 18] # Assume: projected reassessment workload delay.
+
+[randomness]
+recheck_seed_offset = 1000 # Assume: independent projection RNG, preserving earlier draws.

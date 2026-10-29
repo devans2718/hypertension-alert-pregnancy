@@ -100,3 +100,12 @@ def test_empty_cohort_returns_missing_averages():
     assert all(r.supported_patients == 0 for r in results)
     assert all(r.average_recheck_saved is None for r in results)
     assert all(r.average_medication_saved is None for r in results)
+
+
+def test_default_sensitivity_matches_pre_refactor_results(cohort):
+    """Config extraction must not silently change the assumed simulation model."""
+    rows = run_sensitivity_analysis(cohort)
+    assert [r.supported_patients for r in rows] == [20] * 5
+    assert [r.average_recheck_saved for r in rows] == [0.0, 2.35, 4.35, 6.5, 8.85]
+    assert [r.average_medication_saved for r in rows] == [0.0, 3.75, 7.45, 11.05, 14.8]
+    assert [r.tool_recheck_lateness for r in rows] == [8.85, 6.5, 4.5, 2.35, 0.0]

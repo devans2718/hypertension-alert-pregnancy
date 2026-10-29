@@ -48,10 +48,13 @@ src/htn_alert/        core logic
   rules.py            checks on a single reading
   episodes.py         per-patient episode logic: readings and actions in, events out
   generator.py        synthetic patients, readings and staff actions
+  simulation_config.py loads synthetic generator and workflow assumptions
   evaluate.py         metrics over event streams
 app/                  the demo app (planned)
 tests/                pytest tests
 config/protocol.toml  clinical thresholds, repeat window, escalation times
+config/generator.toml synthetic BP fixtures and explicit delayed-repeat subtypes
+config/workflow.toml  assumed staff delays, separate from clinical targets
 ```
 
 - **Respect the data flow:** the generator produces Readings and Actions, the

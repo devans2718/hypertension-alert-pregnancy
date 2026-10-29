@@ -15,6 +15,7 @@ from datetime import datetime
 from htn_alert.cohort_evaluation import evaluate_cohort
 from htn_alert.contract import Reading
 from htn_alert.generator import generate_cohort
+from htn_alert.protocol import Protocol, load_protocol
 
 
 DEFAULT_EFFECTS = (0.0, 0.25, 0.50, 0.75, 1.0)
@@ -39,9 +40,12 @@ def run_sensitivity_analysis(
     cohort: dict[str, list[Reading]],
     effects: tuple[float, ...] = DEFAULT_EFFECTS,
     seed: int = 42,
+    *,
+    protocol: Protocol | None = None,
 ) -> tuple[SensitivityRow, ...]:
     """Evaluate the same synthetic patients at each assumed effect."""
 
+    protocol = protocol if protocol is not None else load_protocol()
     rows = []
 
     for effect in effects:
@@ -54,6 +58,7 @@ def run_sensitivity_analysis(
             cohort=cohort,
             prompt_effect=effect,
             seed=seed,
+            protocol=protocol,
         )
 
         rows.append(
@@ -96,13 +101,17 @@ def fmt(value: float | None) -> str:
 
 
 if __name__ == "__main__":
+    protocol = load_protocol()
     cohort = generate_cohort(
         patients_per_scenario=10,
         start_time=datetime(2026, 10, 26, 8, 0),
         seed=42,
+        protocol=protocol,
     )
 
-    rows = run_sensitivity_analysis(cohort, seed=42)
+    rows = run_sensitivity_analysis(cohort, seed=42, protocol=protocol)
+    treatment_minutes = protocol.treatment_target.total_seconds() / 60
+    timing_header = f"Within {treatment_minutes:g} B/T"
 
     print("\nOB-RESPONSE SENSITIVITY ANALYSIS")
     print("Same 80 synthetic patients at each effect level")
@@ -114,7 +123,7 @@ if __name__ == "__main__":
         f"{'Recheck saved':>15} "
         f"{'Notify saved':>14} "
         f"{'Med saved':>12} "
-        f"{'Within 60 B/T':>16}"
+        f"{timing_header:>16}"
     )
 
     for row in rows:
@@ -136,5 +145,5 @@ if __name__ == "__main__":
     print("- Recheck benefits are projected, not observed BP readings.")
     print("- Treatment timing uses existing synthetic severe repeats.")
     print("- Workflow effects do not establish clinical effectiveness.")
-    print("- Within-60 counts are not the full SMFM patient-level rate.")
+    print(f"- Within-{treatment_minutes:g} counts are not the full SMFM patient-level rate.")
     print("- The cohort is balanced for testing, not hospital prevalence.")

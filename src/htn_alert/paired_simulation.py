@@ -20,6 +20,8 @@ from datetime import datetime
 
 from htn_alert.contract import Reading
 from htn_alert.generator import generate_bp_readings
+from htn_alert.protocol import Protocol, load_protocol
+from htn_alert.simulation_config import WorkflowConfig, load_workflow_config
 from htn_alert.workflow import WorkflowResult, simulate_workflow
 
 
@@ -61,6 +63,9 @@ def compare_workflows(
     seed: int = 42,
     prompt_effect: float = 0.5,
     missing_recheck: bool = False,
+    *,
+    protocol: Protocol | None = None,
+    workflow_config: WorkflowConfig | None = None,
 ) -> PairedResult:
     """Compare baseline and tool workflows using the same readings.
 
@@ -74,6 +79,8 @@ def compare_workflows(
 
     # Preserve caller-owned data, even if readings are not sorted.
     patient_readings = list(readings)
+    protocol = protocol if protocol is not None else load_protocol()
+    workflow_config = workflow_config if workflow_config is not None else load_workflow_config()
 
     baseline = simulate_workflow(
         patient_readings,
@@ -82,6 +89,8 @@ def compare_workflows(
         seed=seed,
         prompt_effect=prompt_effect,
         missing_recheck=missing_recheck,
+        protocol=protocol,
+        config=workflow_config,
     )
 
     assisted = simulate_workflow(
@@ -91,6 +100,8 @@ def compare_workflows(
         seed=seed,
         prompt_effect=prompt_effect,
         missing_recheck=missing_recheck,
+        protocol=protocol,
+        config=workflow_config,
     )
 
     # Confirm that the two models use identical BP anchors.
@@ -141,6 +152,7 @@ def compare_workflows(
 
 
 if __name__ == "__main__":
+    protocol = load_protocol()
     start = datetime(2026, 10, 26, 8, 0)
 
     readings = generate_bp_readings(
@@ -148,6 +160,7 @@ if __name__ == "__main__":
         start_time=start,
         scenario="persistent_severe",
         seed=44,
+        protocol=protocol,
     )
 
     print("\nPAIRED WORKFLOW SIMULATION")
@@ -165,6 +178,7 @@ if __name__ == "__main__":
             provider_pathway=pathway,
             seed=42,
             prompt_effect=0.5,
+            protocol=protocol,
         )
 
         print("=" * 58)
@@ -197,11 +211,11 @@ if __name__ == "__main__":
             result.tool.treatment_minutes,
         )
         print(
-            "Baseline within 60 minutes:",
+            f"Baseline within {result.baseline.treatment_target.total_seconds() / 60:g} minutes:",
             result.baseline_within_60,
         )
         print(
-            "Tool within 60 minutes:",
+            f"Tool within {result.tool.treatment_target.total_seconds() / 60:g} minutes:",
             result.tool_within_60,
         )
 

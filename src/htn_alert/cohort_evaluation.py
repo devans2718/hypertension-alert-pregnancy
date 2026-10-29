@@ -23,12 +23,12 @@ from datetime import datetime
 from statistics import mean
 
 from htn_alert.contract import Reading
-from htn_alert.generator import (
-    generate_cohort,
-    is_severe,
-)
+from htn_alert.generator import generate_cohort
 from htn_alert.paired_simulation import compare_workflows
-from htn_alert.workflow import PROVIDER_PATHWAYS
+from htn_alert.protocol import Protocol, load_protocol
+from htn_alert.rules import is_severe
+from htn_alert.simulation_config import WorkflowConfig, load_workflow_config
+from htn_alert.workflow import PROVIDER_PATHWAYS, find_severe_repeat_in_window
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,8 @@ class CohortEvaluation:
     unsupported_patients: int
 
     no_severe_bp_patients: int
+    # Compatibility field: no existing severe repeat in the configured window;
+    # this does not count clinically nonpersistent patients (issue #9).
     severe_without_qualifying_repeat: int
 
     average_recognition_minutes_saved: float | None
@@ -85,6 +87,11 @@ class CohortEvaluation:
 
     patients: tuple[PatientEvaluation, ...]
 
+    @property
+    def severe_without_repeat_in_window(self) -> int:
+        """Severe streams the limited simulator cannot yet handle."""
+        return self.severe_without_qualifying_repeat
+
 
 def _average(values: list[float | None]) -> float | None:
     """Average available measurements; do not treat missing as zero."""
@@ -97,50 +104,26 @@ def _average(values: list[float | None]) -> float | None:
     return mean(available)
 
 
-def _has_qualifying_severe_repeat(
-    readings: list[Reading],
+def _has_severe_repeat_in_window(
+    readings: list[Reading], protocol: Protocol | None = None,
 ) -> bool:
-    """Check whether the limited paired simulator supports this stream.
+    """Check for an existing severe repeat at 15–60 min, using protocol bounds.
 
-    This is an engineering eligibility check, NOT a complete
-    clinical persistence definition.
+    This reuses the workflow's limited eligibility lookup, not a persistence
+    algorithm. Missing early below-severe readings and full SMFM persistence
+    belong to Daniel's episode engine and examples in issue #9:
+    https://github.com/devans2718/hypertension-alert-pregnancy/issues/9
     """
-
-    if not readings:
-        return False
-
-    ordered = sorted(readings, key=lambda r: r.time)
-
-    first_severe = next(
-        (
-            reading
-            for reading in ordered
-            if is_severe(reading.systolic, reading.diastolic)
-        ),
-        None,
-    )
-
-    if first_severe is None:
-        return False
-
-    for reading in ordered:
-        elapsed_minutes = (
-            reading.time - first_severe.time
-        ).total_seconds() / 60
-
-        if (
-            15 <= elapsed_minutes <= 60
-            and is_severe(reading.systolic, reading.diastolic)
-        ):
-            return True
-
-    return False
+    return find_severe_repeat_in_window(readings, protocol) is not None
 
 
 def evaluate_cohort(
     cohort: dict[str, list[Reading]],
     prompt_effect: float = 0.5,
     seed: int = 42,
+    *,
+    protocol: Protocol | None = None,
+    workflow_config: WorkflowConfig | None = None,
 ) -> CohortEvaluation:
     """Evaluate supported synthetic patient workflows.
 
@@ -158,6 +141,8 @@ def evaluate_cohort(
             "prompt_effect must be between 0.0 and 1.0."
         )
 
+    protocol = protocol if protocol is not None else load_protocol()
+    workflow_config = workflow_config if workflow_config is not None else load_workflow_config()
     patient_results = []
 
     for index, (patient_id, readings) in enumerate(
@@ -171,7 +156,7 @@ def evaluate_cohort(
             )
 
         severe_count = sum(
-            is_severe(r.systolic, r.diastolic)
+            is_severe(r, protocol)
             for r in readings
         )
 
@@ -187,7 +172,7 @@ def evaluate_cohort(
             )
             continue
 
-        if not _has_qualifying_severe_repeat(readings):
+        if not _has_severe_repeat_in_window(readings, protocol):
             patient_results.append(
                 PatientEvaluation(
                     patient_id=patient_id,
@@ -195,8 +180,8 @@ def evaluate_cohort(
                     severe_readings=severe_count,
                     supported=False,
                     reason=(
-                        "Severe BP without qualifying repeat "
-                        "for current demonstration"
+                        "Severe BP without an existing severe repeat in the "
+                        "configured window; full persistence awaits issue #9"
                     ),
                 )
             )
@@ -207,6 +192,8 @@ def evaluate_cohort(
             provider_pathway=pathway,
             seed=seed + index,
             prompt_effect=prompt_effect,
+            protocol=protocol,
+            workflow_config=workflow_config,
         )
 
         patient_results.append(
@@ -307,16 +294,19 @@ def _display(value: float | None) -> str:
 
 
 if __name__ == "__main__":
+    protocol = load_protocol()
     cohort = generate_cohort(
         patients_per_scenario=10,
         start_time=datetime(2026, 10, 26, 8, 0),
         seed=42,
+        protocol=protocol,
     )
 
     evaluation = evaluate_cohort(
         cohort,
         prompt_effect=0.5,
         seed=42,
+        protocol=protocol,
     )
 
     print("\n" + "=" * 60)
@@ -339,8 +329,8 @@ if __name__ == "__main__":
         evaluation.no_severe_bp_patients,
     )
     print(
-        "Severe BP without qualifying repeat:",
-        evaluation.severe_without_qualifying_repeat,
+        "Severe BP without an existing severe repeat in the window:",
+        evaluation.severe_without_repeat_in_window,
     )
 
     print("\nWORKFLOW COMPARISON — SUPPORTED PATIENTS ONLY")
@@ -391,11 +381,11 @@ if __name__ == "__main__":
         ),
     )
     print(
-        "Baseline medication within 60 minutes:",
+        f"Baseline medication within {protocol.treatment_target.total_seconds() / 60:g} minutes:",
         evaluation.supported_baseline_within_60,
     )
     print(
-        "OB-Response medication within 60 minutes:",
+        f"OB-Response medication within {protocol.treatment_target.total_seconds() / 60:g} minutes:",
         evaluation.supported_tool_within_60,
     )
 
@@ -413,7 +403,7 @@ if __name__ == "__main__":
         "the modeled medication-time improvements."
     )
     print(
-        "- Medication within 60 minutes is a timing indicator, "
+        f"- Medication within {protocol.treatment_target.total_seconds() / 60:g} minutes is a timing indicator, "
         "not the complete SMFM patient-level compliance measure."
     )
     print(
