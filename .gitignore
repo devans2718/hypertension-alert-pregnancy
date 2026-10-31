@@ -7,6 +7,9 @@ __pycache__/
 # Local configuration and secrets
 .env
 
+# Agents' and builders' own notes (see AGENTS.md)
+notes/
+
 # Editors and OS
 .vscode/
 .idea/
