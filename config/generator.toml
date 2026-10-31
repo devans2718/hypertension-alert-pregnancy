@@ -1,0 +1,90 @@
+# Synthetic engineering fixtures, not patient-derived distributions or clinical rules.
+# Every parameter below is Assume: copied from PR #7 to preserve its behavior.
+# Severe thresholds and the repeat/treatment windows belong in protocol.toml.
+
+[defaults]
+duration_hours = 3 # Assume: original simulation duration.
+interval_minutes = 15 # Assume: routine observation cadence, not a reassessment rule.
+baseline_systolic = 120 # Assume: original synthetic baseline, mmHg.
+baseline_diastolic = 80 # Assume: original synthetic baseline, mmHg.
+minimum_template_minutes = 180 # Assume: time required by the severe-case fixtures.
+
+[routine]
+systolic_variation = [-5, 5] # Assume: inclusive uniform variation, mmHg.
+diastolic_variation = [-4, 4] # Assume: inclusive uniform variation, mmHg.
+non_hypertensive_max = [139, 89] # Assume: original fixture caps, mmHg; not a clinical rule.
+
+[onset]
+minutes = [45, 60, 75, 90] # Assume: equally likely synthetic onset offsets.
+systolic = [162, 178] # Assume: inclusive uniform onset range, mmHg.
+diastolic = [108, 118] # Assume: inclusive uniform onset range, mmHg.
+
+[scenarios.mild_hypertension]
+baseline = [145, 95] # Assume: scenario baseline, mmHg.
+
+[scenarios.borderline_severe]
+baseline = [155, 105] # Assume: scenario baseline, mmHg.
+
+[[scenarios.persistent_severe.readings]]
+after_minutes = 10 # Assume: offset from synthetic onset, not a persistence definition.
+systolic = [161, 174] # Assume: inclusive uniform fixture range, mmHg.
+diastolic = [105, 117] # Assume: inclusive uniform fixture range, mmHg.
+
+[[scenarios.persistent_severe.readings]]
+after_minutes = 15 # Assume: original fixture offset, minutes.
+systolic = [161, 170] # Assume: inclusive uniform fixture range, mmHg.
+diastolic = [104, 115] # Assume: inclusive uniform fixture range, mmHg.
+
+[[scenarios.persistent_severe.readings]]
+after_minutes = 30 # Assume: original fixture offset, minutes.
+systolic = [161, 168] # Assume: inclusive uniform fixture range, mmHg.
+diastolic = [102, 113] # Assume: inclusive uniform fixture range, mmHg.
+
+[[scenarios.persistent_severe.readings]]
+after_minutes = 45 # Assume: original fixture offset, minutes.
+systolic = [140, 152] # Assume: inclusive uniform fixture range, mmHg.
+diastolic = [88, 99] # Assume: inclusive uniform fixture range, mmHg.
+
+[[scenarios.nonpersistent_severe.readings]]
+after_minutes = 10 # Assume: original fixture offset, minutes.
+systolic = [125, 145] # Assume: inclusive uniform fixture range, mmHg.
+diastolic = [75, 95] # Assume: inclusive uniform fixture range, mmHg.
+
+[[scenarios.recurrent_severe.readings]]
+after_minutes = 10 # Assume: original fixture offset, minutes.
+systolic = 135 # Assume: fixed fixture value, mmHg.
+diastolic = 85 # Assume: fixed fixture value, mmHg.
+
+[[scenarios.recurrent_severe.readings]]
+after_minutes = 45 # Assume: original fixture offset, minutes.
+systolic = [162, 175] # Assume: inclusive uniform fixture range, mmHg.
+diastolic = [108, 117] # Assume: inclusive uniform fixture range, mmHg.
+
+[[scenarios.recurrent_severe.readings]]
+after_minutes = 55 # Assume: original fixture offset, minutes.
+systolic = [162, 175] # Assume: inclusive uniform fixture range, mmHg.
+diastolic = [107, 117] # Assume: inclusive uniform fixture range, mmHg.
+
+[[scenarios.recurrent_severe.readings]]
+after_minutes = 60 # Assume: original fixture offset, minutes.
+systolic = 145 # Assume: fixed fixture value, mmHg.
+diastolic = 92 # Assume: fixed fixture value, mmHg.
+
+[[scenarios.spurious_severe.readings]]
+after_minutes = 10 # Assume: original fixture offset, minutes.
+systolic = [118, 135] # Assume: inclusive uniform fixture range, mmHg.
+diastolic = [75, 89] # Assume: inclusive uniform fixture range, mmHg.
+
+[delayed_repeat]
+default_subtype = "delayed" # Assume: single-patient default, independent of seed.
+cohort_subtypes = ["missing_early", "delayed"] # Assume: balanced cycle; preserves default seed-42 cohort.
+
+[delayed_repeat.subtypes.delayed]
+after_minutes = 16 # Assume: nonsevere repeat after the early window.
+systolic = 135 # Assume: fixed fixture value, mmHg.
+diastolic = 85 # Assume: fixed fixture value, mmHg.
+
+[delayed_repeat.subtypes.missing_early]
+after_minutes = 30 # Assume: no earlier repeat is supplied.
+systolic = 135 # Assume: fixed fixture value, mmHg.
+diastolic = 85 # Assume: fixed fixture value, mmHg.
