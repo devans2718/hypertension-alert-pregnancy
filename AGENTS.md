@@ -52,6 +52,7 @@ src/htn_alert/        core logic
 app/                  the demo app (planned)
 tests/                pytest tests
 config/protocol.toml  clinical thresholds, repeat window, escalation times
+notes/                your own scratch notes; ignored by Git, never committed
 ```
 
 - **Respect the data flow:** the generator produces Readings and Actions, the
