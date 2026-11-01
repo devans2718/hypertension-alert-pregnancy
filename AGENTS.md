@@ -50,7 +50,14 @@ src/htn_alert/        core logic
   generator.py        synthetic patients, readings and staff actions
   simulation_config.py loads synthetic generator and workflow assumptions
   evaluate.py         metrics over event streams
-app/                  the demo app (planned)
+app/                  the demo app
+  streamlit_app.py    interactive bedside entry and replay interface
+  playback.py         reading replay, countdown, and episode state helpers
+  adapters.py         open-data baseline loader and scenario projector
+  scenarios.py        pre-configured clinical test scenarios
+data/                 open benchmark baseline data (de-identified, MIT)
+  public_baseline.csv de-identified UCI/Kaggle maternal risk dataset
+  README.md           dataset source and attribution
 tests/                pytest tests
 config/protocol.toml  clinical thresholds, repeat window, escalation times
 config/generator.toml synthetic BP fixtures and explicit delayed-repeat subtypes
