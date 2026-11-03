@@ -29,7 +29,6 @@ def test_protocol() -> Protocol:
         repeat_max=timedelta(minutes=60),
         treatment_target=timedelta(minutes=60),
         escalate_unacknowledged=timedelta(minutes=10),
-        close_after=timedelta(minutes=120),
     )
 
 
