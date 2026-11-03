@@ -10,6 +10,8 @@ def test_default_protocol_loads():
     assert protocol.severe_systolic == 160
     assert protocol.severe_diastolic == 110
     assert protocol.repeat_min == timedelta(minutes=15)
+    assert protocol.repeat_max == timedelta(minutes=60)
+    assert protocol.treatment_target == timedelta(minutes=60)
 
 
 def test_repeat_window_is_ordered():
