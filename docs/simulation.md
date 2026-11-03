@@ -8,7 +8,7 @@ and intervention effects are assumptions, not measured hospital outcomes.
 
 | File | Purpose | Source |
 | --- | --- | --- |
-| `config/protocol.toml` | Shared severe thresholds, repeat window, treatment duration | Existing Pitch/Lit/Assume comments; unchanged in this refactor |
+| `config/protocol.toml` | Shared severe thresholds, repeat window, treatment duration | Pitch/Lit/Assume comments, with the definitions from SMFM's quality metric |
 | `config/generator.toml` | Default duration/cadence/baselines, variation, onset, scenario readings, delayed-repeat choices | Every value is marked Assume; retained from PR #7 |
 | `config/workflow.toml` | Inclusive uniform staff delay ranges and reassessment RNG offset | Every value is marked Assume; retained from PR #7 |
 
@@ -95,9 +95,8 @@ names do not imply full episode confirmation.
 `within_treatment_target` uses the protocol's treatment duration, captured in
 each result; `within_60_minutes` remains its compatibility alias. Existing paired
 and cohort `within_60` fields likewise refer to that configured target, currently
-60 minutes. This refactor retains the simulator's clock from the **first severe
-BP** and does not change the episode engine's clock or the wording in the shared
-protocol file. Clock alignment with the team is separate from loading the duration.
+60 minutes. The simulator's clock runs from the **first severe BP**, as the shared
+protocol file defines it.
 
 Projected reassessments remain separate from recorded BP observations. They do
 not determine the recorded severe-repeat time or cause the modeled medication

@@ -22,7 +22,6 @@ class Protocol:
     repeat_max: timedelta
     treatment_target: timedelta
     escalate_unacknowledged: timedelta
-    close_after: timedelta
 
 
 def load_protocol(path: Path = DEFAULT_PATH) -> Protocol:
@@ -36,5 +35,4 @@ def load_protocol(path: Path = DEFAULT_PATH) -> Protocol:
         repeat_max=timedelta(minutes=raw["repeat"]["max_minutes"]),
         treatment_target=timedelta(minutes=raw["treatment"]["target_minutes"]),
         escalate_unacknowledged=timedelta(minutes=raw["escalation"]["unacknowledged_minutes"]),
-        close_after=timedelta(minutes=raw["episode"]["close_after_minutes"]),
     )
