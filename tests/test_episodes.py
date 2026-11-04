@@ -41,13 +41,27 @@ def summary(events: list[Event]) -> list[tuple[EventKind, int]]:
     return [(e.kind, int((e.time - T0) / timedelta(minutes=1))) for e in events]
 
 
-def run(*steps: Reading | Action | int, protocol=PROTOCOL) -> list[Event]:
-    """Feed items in order; a bare number is a tick to that minute."""
+def clock(minute: int, second: int) -> datetime:
+    return minutes(minute) + timedelta(seconds=second)
+
+
+def severe_at(minute: int, second: int) -> Reading:
+    return Reading("p1", clock(minute, second), 170, 100)
+
+
+def non_severe_at(minute: int, second: int) -> Reading:
+    return Reading("p1", clock(minute, second), 140, 90)
+
+
+def run(*steps: Reading | Action | int | datetime, protocol=PROTOCOL) -> list[Event]:
+    """Feed items in order; a bare number or datetime is a tick to that time."""
     tracker = EpisodeTracker(protocol)
     events: list[Event] = []
     for step in steps:
         if isinstance(step, int):
             events += tracker.tick(minutes(step))
+        elif isinstance(step, datetime):
+            events += tracker.tick(step)
         else:
             events += tracker.observe(step)
     return events
@@ -272,6 +286,80 @@ def test_a_reopening_leaves_the_onset_for_the_deadline_where_it_was():
     events = run(severe(0), non_severe(15), severe(50))
     [opened] = [e for e in events if e.kind is EventKind.EPISODE_OPENED]
     assert treatment_deadline(opened.time, PROTOCOL) == minutes(60)
+
+
+# Times compare in whole minutes
+
+
+FLAG = "checked within one minute"
+
+
+def closing_detail(events: list[Event]) -> str:
+    [closed] = [e for e in events if e.kind is EventKind.EPISODE_CLOSED]
+    return closed.detail
+
+
+def test_normal_reading_in_the_15th_minute_is_not_persistent():
+    for steps in (
+        (severe(0), non_severe_at(15, 40)),
+        (severe(0), clock(15, 40), non_severe_at(15, 40)),  # a tick first
+    ):
+        events = run(*steps)
+        assert count(events, EventKind.CONFIRMED) == 0
+        assert count(events, EventKind.EPISODE_CLOSED) == 1
+
+
+def test_a_tick_in_the_15th_minute_does_not_confirm_until_16():
+    assert count(run(severe(0), clock(15, 40)), EventKind.CONFIRMED) == 0
+    assert count(run(severe(0), clock(15, 59)), EventKind.CONFIRMED) == 0
+    assert (EventKind.CONFIRMED, 16) in summary(run(severe(0), clock(15, 40), 16))
+
+
+def test_normal_reading_at_16_00_still_confirms():
+    events = run(severe(0), non_severe(16))
+    assert count(events, EventKind.CONFIRMED) == 1
+    assert count(events, EventKind.EPISODE_CLOSED) == 1
+
+
+def test_severe_in_the_60th_minute_folds_back():
+    events = run(severe(0), non_severe(15), severe_at(60, 40))
+    assert count(events, EventKind.EPISODE_OPENED) == 1
+    assert count(events, EventKind.EPISODE_REOPENED) == 1
+    assert count(events, EventKind.CONFIRMED) == 1
+
+
+def test_escalation_waits_for_the_next_whole_minute():
+    # Confirmed at 16, so 26:40 is still 10 minutes on, and 27:00 is 11.
+    assert count(run(severe(0), 16, clock(26, 40)), EventKind.ESCALATED) == 0
+    assert count(run(severe(0), 16, clock(26, 40), 27), EventKind.ESCALATED) == 1
+
+
+def test_event_times_keep_the_actual_moment():
+    events = run(severe(0), non_severe_at(15, 40))
+    [closed] = [e for e in events if e.kind is EventKind.EPISODE_CLOSED]
+    assert closed.time == clock(15, 40)
+
+
+def test_treatment_deadline_stays_exact():
+    assert treatment_deadline(clock(0, 40), PROTOCOL) == clock(60, 40)
+
+
+def test_closing_in_the_15th_minute_is_flagged():
+    assert FLAG in closing_detail(run(severe(0), non_severe_at(15, 40)))
+    assert FLAG in closing_detail(run(severe(0), non_severe_at(15, 1)))
+    assert FLAG in closing_detail(run(severe(0), non_severe_at(15, 59)))
+
+
+def test_closing_exactly_on_the_mark_or_outside_it_is_not_flagged():
+    assert FLAG not in closing_detail(run(severe(0), non_severe(15)))
+    assert FLAG not in closing_detail(run(severe(0), non_severe(10)))
+    assert FLAG not in closing_detail(run(severe(0), non_severe(16)))
+
+
+def test_the_flag_names_the_protocols_mark():
+    shorter = replace(PROTOCOL, repeat_min=timedelta(minutes=5))
+    detail = closing_detail(run(severe(0), non_severe_at(5, 30), protocol=shorter))
+    assert "5-minute mark" in detail
 
 
 # Late confirmation

@@ -17,11 +17,20 @@ research prototype running on synthetic data, not for clinical use.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from htn_alert.contract import Action, ActionKind, Event, EventKind, Reading
 from htn_alert.protocol import Protocol
 from htn_alert.rules import is_severe
+
+
+def _elapsed(later: datetime, earlier: datetime) -> timedelta:
+    """Time between two moments in whole minutes, dropping leftover seconds.
+
+    The episode rules compare time through this, because a difference of
+    seconds around a boundary shouldn't change what happens to a patient.
+    """
+    return timedelta(minutes=(later - earlier) // timedelta(minutes=1))
 
 
 def treatment_deadline(onset: datetime, protocol: Protocol) -> datetime:
@@ -63,7 +72,7 @@ def _should_escalate(episode: _Episode, now: datetime, protocol: Protocol) -> bo
     # CONFIRMED is the notification. A closing cancels the timer, so a
     # reopening starts it again from the reopening.
     notified = max(episode.confirmed_at, episode.reopened_at or episode.confirmed_at)
-    return now - notified > protocol.escalate_unacknowledged
+    return _elapsed(now, notified) > protocol.escalate_unacknowledged
 
 
 class EpisodeTracker:
@@ -108,7 +117,7 @@ class EpisodeTracker:
         """
         return (
             episode.closed_at is None
-            or now - episode.onset <= self.protocol.repeat_max
+            or _elapsed(now, episode.onset) <= self.protocol.repeat_max
         )
 
     def _take_reading(self, reading: Reading) -> list[Event]:
@@ -121,7 +130,7 @@ class EpisodeTracker:
                 episode.closed_at = now
                 return [Event(
                     patient_id, now, EventKind.EPISODE_CLOSED,
-                    "reading below the severe range",
+                    self._closing_detail(episode, now),
                 )]
             return []
 
@@ -141,7 +150,9 @@ class EpisodeTracker:
             ))
 
         in_window = (
-            self.protocol.repeat_min <= now - episode.onset <= self.protocol.repeat_max
+            self.protocol.repeat_min
+            <= _elapsed(now, episode.onset)
+            <= self.protocol.repeat_max
         )
         if episode.confirmed_at is None and in_window:
             episode.confirmed_at = now
@@ -150,6 +161,20 @@ class EpisodeTracker:
                 "severe again within the repeat window",
             ))
         return events
+
+    def _closing_detail(self, episode: _Episode, now: datetime) -> str:
+        """Why an episode closed, noting a reading just past the repeat mark.
+
+        A reading in that minute counts as in time, but staff should be able to
+        see it wasn't exactly on the mark. Reading can't tell a hand-taken check
+        from a monitor's, so this applies to any reading in that minute.
+        """
+        detail = "reading below the severe range"
+        mark = self.protocol.repeat_min
+        if now - episode.onset > mark and _elapsed(now, episode.onset) == mark:
+            mark_minutes = mark // timedelta(minutes=1)
+            detail += f"; checked within one minute of the {mark_minutes}-minute mark"
+        return detail
 
     def _take_action(self, action: Action) -> list[Event]:
         episode = self._episodes.get(action.patient_id)
@@ -171,13 +196,14 @@ class EpisodeTracker:
             return []  # closing cancels whatever was pending
 
         events = []
-        elapsed = now - episode.onset
+        elapsed = _elapsed(now, episode.onset)
         unconfirmed = episode.confirmed_at is None
         if unconfirmed and not episode.repeat_due_reported and elapsed >= self.protocol.repeat_min:
             episode.repeat_due_reported = True
             events.append(Event(patient_id, now, EventKind.REPEAT_DUE))
-        # Strictly after: a non-severe reading at exactly repeat_min still counts
-        # as in time, and has to get the chance to arrive.
+        # Strictly after, in whole minutes: a non-severe reading anywhere in the
+        # repeat_min minute still counts as in time, and has to get the chance to
+        # arrive.
         if unconfirmed and elapsed > self.protocol.repeat_min:
             episode.confirmed_at = now
             events.append(Event(
