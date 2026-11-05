@@ -26,6 +26,9 @@ class Reading:
 
     Ground truth the system can't know (e.g. that a reading is spurious
     because the cuff was misplaced) stays with the generator, not here.
+
+    Data limitation: readings come only from the L&D monitors, at intervals
+    of 15 minutes or more.
     """
 
     patient_id: str

@@ -1,7 +1,7 @@
 """Unit tests for app/playback.py helper functions.
 
-Tests playback filtering, countdown calculations, protocol state evaluations,
-and automated SBAR handoff formatting.
+Tests playback filtering, latest reading per patient, countdown calculations,
+EpisodeTracker-backed unit views and states, and simulated SBAR formatting.
 """
 
 from datetime import datetime, timedelta
@@ -12,10 +12,12 @@ from app.playback import (
     EpisodePhase,
     calculate_countdown,
     evaluate_playback_episode,
+    evaluate_unit_view,
     filter_readings_up_to,
     generate_sbar_handoff,
+    latest_reading_per_patient,
 )
-from htn_alert.contract import Reading
+from htn_alert.contract import Action, ActionKind, Reading
 from htn_alert.protocol import Protocol
 
 
@@ -51,6 +53,30 @@ def test_filter_readings_up_to():
     # After r3
     filtered_30m = filter_readings_up_to(readings, t0 + timedelta(minutes=30))
     assert filtered_30m == [r1, r2, r3]
+
+
+def test_latest_reading_per_patient():
+    """Verify latest reading per patient at time t (Issue #8 requirement)."""
+    t0 = datetime(2026, 10, 31, 10, 0)
+    r_p1_0 = Reading("Bed-01", t0, 120, 80)
+    r_p1_10 = Reading("Bed-01", t0 + timedelta(minutes=10), 165, 112)
+    r_p2_0 = Reading("Bed-02", t0, 118, 76)
+    r_p3_0 = Reading("Bed-03", t0, 170, 114)
+    r_p3_15 = Reading("Bed-03", t0 + timedelta(minutes=15), 168, 110)
+
+    all_readings = [r_p1_0, r_p2_0, r_p3_0, r_p1_10, r_p3_15]
+
+    # At T=5 min
+    latest_t5 = latest_reading_per_patient(all_readings, t0 + timedelta(minutes=5))
+    assert latest_t5["Bed-01"] == r_p1_0
+    assert latest_t5["Bed-02"] == r_p2_0
+    assert latest_t5["Bed-03"] == r_p3_0
+
+    # At T=20 min
+    latest_t20 = latest_reading_per_patient(all_readings, t0 + timedelta(minutes=20))
+    assert latest_t20["Bed-01"] == r_p1_10
+    assert latest_t20["Bed-02"] == r_p2_0
+    assert latest_t20["Bed-03"] == r_p3_15
 
 
 def test_calculate_countdown():
@@ -89,17 +115,28 @@ def test_evaluate_playback_normal_readings(test_protocol):
     ]
     status = evaluate_playback_episode(readings, test_protocol, simulated_now=t0 + timedelta(minutes=5))
     assert status.phase == EpisodePhase.NONE
-    assert "Normal range" in status.detail
+    assert "Normal reference range" in status.detail
 
 
-def test_evaluate_playback_routine_due(test_protocol):
+def test_evaluate_playback_repeat_pending(test_protocol):
     t0 = datetime(2026, 10, 31, 10, 0)
     readings = [
-        Reading(patient_id="P1", time=t0, systolic=120, diastolic=80),
+        Reading(patient_id="P1", time=t0, systolic=168, diastolic=112),
     ]
-    status = evaluate_playback_episode(readings, test_protocol, simulated_now=t0 + timedelta(minutes=16))
-    assert status.phase == EpisodePhase.ROUTINE_DUE
-    assert "Nurse Notice" in status.detail
+    status = evaluate_playback_episode(readings, test_protocol, simulated_now=t0 + timedelta(minutes=5))
+    assert status.phase == EpisodePhase.REPEAT_PENDING
+    assert status.first_severe_reading == readings[0]
+    assert status.repeat_target_time == t0 + test_protocol.repeat_min
+
+
+def test_evaluate_playback_repeat_due(test_protocol):
+    t0 = datetime(2026, 10, 31, 10, 0)
+    readings = [
+        Reading(patient_id="P1", time=t0, systolic=168, diastolic=112),
+    ]
+    status = evaluate_playback_episode(readings, test_protocol, simulated_now=t0 + test_protocol.repeat_min)
+    assert status.phase == EpisodePhase.REPEAT_DUE
+    assert "due now" in status.detail
 
 
 def test_evaluate_playback_confirmed_persistent(test_protocol):
@@ -127,6 +164,38 @@ def test_evaluate_playback_resolved(test_protocol):
     assert "below severe range" in status.detail
 
 
+def test_evaluate_playback_escalated(test_protocol):
+    t0 = datetime(2026, 10, 31, 10, 0)
+    r1 = Reading(patient_id="P1", time=t0, systolic=168, diastolic=112)
+    r2 = Reading(patient_id="P1", time=t0 + timedelta(minutes=16), systolic=164, diastolic=108)
+
+    # 12 minutes after confirmation without provider acknowledgment -> ESCALATED
+    now = t0 + timedelta(minutes=16) + test_protocol.escalate_unacknowledged + timedelta(minutes=2)
+    status = evaluate_playback_episode([r1, r2], test_protocol, simulated_now=now)
+    assert status.phase == EpisodePhase.ESCALATED
+
+
+def test_evaluate_unit_view(test_protocol):
+    """Verify unit view across multiple patients at time t (Issue #18)."""
+    t0 = datetime(2026, 10, 31, 10, 0)
+    cohort = {
+        "Bed-01": [Reading("Bed-01", t0, 120, 80)],
+        "Bed-02": [
+            Reading("Bed-02", t0, 168, 112),
+            Reading("Bed-02", t0 + timedelta(minutes=16), 164, 108),
+        ],
+        "Bed-03": [
+            Reading("Bed-03", t0, 172, 114),
+            Reading("Bed-03", t0 + timedelta(minutes=16), 128, 82),
+        ],
+    }
+
+    unit = evaluate_unit_view(cohort, t0 + timedelta(minutes=20), test_protocol)
+    assert unit["Bed-01"].phase == EpisodePhase.NONE
+    assert unit["Bed-02"].phase == EpisodePhase.CONFIRMED
+    assert unit["Bed-03"].phase == EpisodePhase.RESOLVED
+
+
 def test_generate_sbar_handoff(test_protocol):
     t0 = datetime(2026, 10, 31, 10, 0)
     r1 = Reading(patient_id="P101", time=t0, systolic=165, diastolic=112)
@@ -135,6 +204,7 @@ def test_generate_sbar_handoff(test_protocol):
     confirmed_status = evaluate_playback_episode([r1, r2], test_protocol)
     sbar = generate_sbar_handoff("P101", confirmed_status, [r1, r2])
 
+    assert "**SIMULATED ATTENDING PHYSICIAN NOTIFICATION" in sbar
     assert "**SITUATION:**" in sbar
     assert "**BACKGROUND:**" in sbar
     assert "**ASSESSMENT:**" in sbar
@@ -152,4 +222,3 @@ def test_generate_sbar_handoff_unconfirmed(test_protocol):
 
     sbar = generate_sbar_handoff("P102", normal_status, [r1])
     assert "only generated upon confirmed" in sbar
-

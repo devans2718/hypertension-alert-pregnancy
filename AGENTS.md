@@ -47,6 +47,7 @@ src/htn_alert/        core logic
   protocol.py         loads config/protocol.toml
   rules.py            checks on a single reading
   episodes.py         per-patient episode logic: readings and actions in, events out
+  emr.py              AI-drafted EMR entry and traceability verification
   generator.py        synthetic patients, readings and staff actions
   simulation_config.py loads synthetic generator and workflow assumptions
   evaluate.py         metrics over event streams

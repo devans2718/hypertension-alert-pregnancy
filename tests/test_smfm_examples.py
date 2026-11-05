@@ -22,12 +22,6 @@ from htn_alert.contract import EventKind, Reading
 from htn_alert.episodes import EpisodeTracker
 from htn_alert.protocol import load_protocol
 
-pytestmark = pytest.mark.xfail(
-    raises=NotImplementedError,
-    strict=True,
-    reason="EpisodeTracker not implemented yet",
-)
-
 PROTOCOL = load_protocol()
 T0 = datetime(2026, 11, 1, 8, 0)  # minute 0: the first severe reading
 SEVERE = (170, 100)  # severe by systolic

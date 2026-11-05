@@ -1,7 +1,11 @@
 """Labor and Delivery Severe Hypertension Alert System - Demonstration App.
 
 A research prototype exploring timely recognition, bedside repeat confirmation,
-countdown tracking, and autonomous downstream communication workflows on L&D units.
+EpisodeTracker-driven event processing, AI-drafted EMR documentation with traceability,
+and unit-wide patient replay.
+
+Research prototype. Not a medical device and not for clinical use.
+Designed for the Hack-A-Roo Fall 2026 Pitch-to-Build track.
 """
 
 import sys
@@ -16,16 +20,19 @@ if str(REPO_ROOT) not in sys.path:
 import pandas as pd
 import streamlit as st
 
-from app.adapters import load_baseline_records, project_record_to_readings
+from app.adapters import load_baseline_records
 from app.playback import (
     EpisodePhase,
     calculate_countdown,
     evaluate_playback_episode,
+    evaluate_unit_view,
     filter_readings_up_to,
-    generate_sbar_handoff,
+    latest_reading_per_patient,
 )
 from app.scenarios import get_default_scenarios
-from htn_alert.contract import Reading
+from htn_alert.contract import Action, ActionKind, Reading
+from htn_alert.emr import draft_emr_entry, verify_traceability
+from htn_alert.generator import generate_bp_readings
 from htn_alert.protocol import load_protocol
 from htn_alert.rules import is_severe
 
@@ -39,14 +46,19 @@ st.set_page_config(
 protocol = load_protocol()
 
 # Session State Initialization
-if "readings_history" not in st.session_state:
-    st.session_state.readings_history = []
+if "patients_data" not in st.session_state:
+    st.session_state.patients_data = {
+        "Bed-01": {"readings": [], "actions": [], "confirmed_emr": [], "base_time": None},
+        "Bed-02": {"readings": [], "actions": [], "confirmed_emr": [], "base_time": None},
+        "Bed-03": {"readings": [], "actions": [], "confirmed_emr": [], "base_time": None},
+        "Bed-04": {"readings": [], "actions": [], "confirmed_emr": [], "base_time": None},
+    }
 if "current_patient_id" not in st.session_state:
     st.session_state.current_patient_id = "Bed-04"
-if "episode_start_time" not in st.session_state:
-    st.session_state.episode_start_time = None
 if "replay_minute" not in st.session_state:
     st.session_state.replay_minute = 0
+if "replay_source" not in st.session_state:
+    st.session_state.replay_source = "Unit Multi-Bed View (Beds 01–03)"
 
 
 # Header
@@ -65,7 +77,7 @@ with st.sidebar:
         f"- Diastolic: ≥ {protocol.severe_diastolic} mmHg\n\n"
         f"**Timelines:**\n"
         f"- Repeat Window: {int(protocol.repeat_min.total_seconds() // 60)}–{int(protocol.repeat_max.total_seconds() // 60)} min\n"
-        f"- Medication Target: ≤ {int(protocol.treatment_target.total_seconds() // 60)} min\n"
+        f"- Medication Target: ≤ {int(protocol.treatment_target.total_seconds() // 60)} min (from onset)\n"
         f"- Escalation Delay: {int(protocol.escalate_unacknowledged.total_seconds() // 60)} min"
     )
 
@@ -91,20 +103,33 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
     with col_entry:
         st.markdown("### 📝 Bedside Vital Signs Entry")
 
-        patient_id = st.text_input(
+        # Patient Bed Selector
+        bed_options = ["Bed-01", "Bed-02", "Bed-03", "Bed-04", "Bed-05"]
+        patient_id = st.selectbox(
             "Patient Identifier / Bed Number",
-            value=st.session_state.current_patient_id,
+            options=bed_options,
+            index=bed_options.index(st.session_state.current_patient_id) if st.session_state.current_patient_id in bed_options else 3,
         )
         st.session_state.current_patient_id = patient_id
+
+        if patient_id not in st.session_state.patients_data:
+            st.session_state.patients_data[patient_id] = {
+                "readings": [],
+                "actions": [],
+                "confirmed_emr": [],
+                "base_time": None,
+            }
+
+        pdata = st.session_state.patients_data[patient_id]
 
         # Quick Test Case Prefill Buttons
         st.write("**Quick-Fill Clinical Test Cases:**")
         qcol1, qcol2 = st.columns(2)
-        if qcol1.button("🟡 1. Severe Onset (168/112)"):
+        if qcol1.button("🟡 Severe Onset (168/112)"):
             st.session_state.sys_val = 168
             st.session_state.dia_val = 112
             st.session_state.sim_delta_val = 0
-        if qcol2.button("🟢 2. Normal Routine (120/78)"):
+        if qcol2.button("🟢 Normal Routine (120/78)"):
             st.session_state.sys_val = 120
             st.session_state.dia_val = 78
             st.session_state.sim_delta_val = 0
@@ -125,11 +150,11 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
         )
 
         if st.button("➕ Log Blood Pressure Reading", type="primary", use_container_width=True):
-            if not st.session_state.readings_history:
-                base = datetime.now()
-                st.session_state.episode_start_time = base
+            if not pdata["readings"]:
+                base = datetime.now().replace(microsecond=0)
+                pdata["base_time"] = base
             else:
-                base = st.session_state.episode_start_time
+                base = pdata["base_time"]
 
             reading_time = base + timedelta(minutes=sim_delta)
             new_reading = Reading(
@@ -138,35 +163,35 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
                 systolic=int(systolic),
                 diastolic=int(diastolic),
             )
-            st.session_state.readings_history.append(new_reading)
-            st.success(f"Logged {systolic}/{diastolic} mmHg at {reading_time.strftime('%H:%M:%S')}")
+            pdata["readings"].append(new_reading)
+            st.success(f"Logged {systolic}/{diastolic} mmHg for {patient_id} at {reading_time.strftime('%H:%M:%S')}")
 
-        if st.button("🔄 Reset Patient Episode", use_container_width=True):
-            st.session_state.readings_history = []
-            st.session_state.episode_start_time = None
-            st.session_state.sim_elapsed_val = 0
+        if st.button("🔄 Reset This Bed's Episode", use_container_width=True):
+            pdata["readings"] = []
+            pdata["actions"] = []
+            pdata["confirmed_emr"] = []
+            pdata["base_time"] = None
             st.rerun()
 
     with col_status:
         st.markdown("### 🔔 Clinical Protocol Status & Countdown")
 
-        readings = st.session_state.readings_history
+        readings = pdata["readings"]
+        actions = pdata["actions"]
+
         if not readings:
-            st.info("No blood pressure readings logged yet. Enter a reading on the left to begin.")
+            st.info(f"No blood pressure readings logged yet for {patient_id}. Enter a reading on the left to begin.")
         else:
             now_clock = readings[-1].time
-            status = evaluate_playback_episode(readings, protocol, simulated_now=now_clock)
+            status = evaluate_playback_episode(
+                readings,
+                protocol,
+                simulated_now=now_clock,
+                actions=actions,
+            )
 
-            # Render Status Card
-            if status.phase == EpisodePhase.ROUTINE_DUE:
-                st.info("🔔 **15-MINUTE NURSE NOTICE: ROUTINE RE-CHECK DUE**")
-                st.markdown(
-                    "15 minutes have elapsed since the baseline normal check. "
-                    "Notice to nurse: please conduct scheduled vital signs re-assessment."
-                )
-                st.write(status.detail)
-
-            elif status.phase == EpisodePhase.NONE:
+            # Render Status Card based on EpisodeTracker events
+            if status.phase == EpisodePhase.NONE:
                 st.success("🟢 **BP Within Target Limits** — Normal vital signs. Routine monitoring continues.")
 
             elif status.phase == EpisodePhase.REPEAT_PENDING:
@@ -183,6 +208,10 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
                     st.progress(progress, text="15-minute repeat measurement confirmation window")
 
             elif status.phase == EpisodePhase.REPEAT_DUE:
+                st.warning("🟠 **REPEAT BP DUE NOW** — 15 minutes reached since severe reading. Recheck vital signs.")
+                st.write(status.detail)
+
+            elif status.phase == EpisodePhase.REPEAT_OVERDUE:
                 st.error("🔴 **REPEAT BP OVERDUE** — Recheck is required immediately to confirm persistence!")
                 st.write(status.detail)
                 if status.repeat_target_time:
@@ -196,25 +225,72 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
                 if status.treatment_target_time:
                     rem_sec, is_overdue, display_str = calculate_countdown(status.treatment_target_time, now_clock)
                     t_prog = max(0.0, min(1.0, 1.0 - (rem_sec / 3600.0)))
-                    st.metric("60-Min Medication Target Countdown", display_str)
-                    st.progress(t_prog, text="National 60-minute time-to-treatment standard (from onset)")
+                    st.metric("60-Min Medication Target Countdown (from onset)", display_str)
+                    st.progress(t_prog, text="National 60-minute time-to-treatment standard (counted from onset)")
+
+            elif status.phase == EpisodePhase.ESCALATED:
+                st.error("🚨 **ESCALATION NOTICE ACTIVE** — Provider unacknowledged after 10 minutes!")
+                st.write(status.detail)
 
             elif status.phase == EpisodePhase.RESOLVED:
                 st.success("🟢 **EPISODE RESOLVED (UNCONFIRMED)**")
                 st.write(status.detail)
 
-            # Downstream Agentic Communication
-            if status.phase == EpisodePhase.CONFIRMED:
+            # Simulated Staff Actions
+            if status.phase in (EpisodePhase.CONFIRMED, EpisodePhase.ESCALATED):
                 st.markdown("---")
-                st.markdown("### 🤖 Autonomous Agent Downstream Communication")
-                sbar_text = generate_sbar_handoff(patient_id, status, readings)
-                st.markdown(sbar_text)
+                st.markdown("### 📞 Attending Provider Communication (Simulated)")
+                st.caption("Deterministic tracking feeds staff actions into EpisodeTracker to halt escalation.")
 
-                b_col1, b_col2 = st.columns(2)
-                if b_col1.button("📲 Transmit SBAR to On-Call OBGYN", use_container_width=True):
-                    st.toast("✅ SBAR alert transmitted to attending physician pager/EHR.")
-                if b_col2.button("💊 Log Antihypertensive Administered", use_container_width=True):
-                    st.toast("✅ Medication administered; treatment target achieved.")
+                act_c1, act_c2 = st.columns(2)
+                if act_c1.button("🩺 Simulate Provider Acknowledged", use_container_width=True):
+                    ack_action = Action(patient_id, now_clock, ActionKind.PROVIDER_ACKNOWLEDGED)
+                    pdata["actions"].append(ack_action)
+                    st.success("✅ Provider acknowledged notification. Escalation stopped.")
+                    st.rerun()
+
+                if act_c2.button("💊 Simulate Dose Administered", use_container_width=True):
+                    dose_action = Action(patient_id, now_clock, ActionKind.DOSE_GIVEN)
+                    pdata["actions"].append(dose_action)
+                    st.success("✅ Antihypertensive dose administered. Timely treatment recorded.")
+                    st.rerun()
+
+            # AI-Drafted EMR Review Step (Issue #17)
+            if status.events:
+                st.markdown("---")
+                st.markdown("### 📝 AI-Drafted EMR Nursing Documentation (Issue #17)")
+                st.caption(
+                    "Deterministic detection & confirmation. An LLM drafts the timeline note from verified events; "
+                    "bedside nurse reviews, verifies traceability, and confirms before logging."
+                )
+
+                draft_text = draft_emr_entry(status.events)
+                t_result = verify_traceability(draft_text, status.events)
+
+                st.info("⚠️ **DRAFT EMR ENTRY — PENDING NURSE REVIEW (Simulated)**")
+                st.text_area("Draft Nursing Note (Editable before confirmation):", value=draft_text, height=180)
+
+                if t_result.valid:
+                    st.success(
+                        f"🛡️ **Traceability Verified:** All {len(t_result.grounded_items)} clinical values, timestamps, "
+                        f"and patient identifiers ({', '.join(t_result.grounded_items)}) trace directly to verified system events."
+                    )
+                else:
+                    st.error(
+                        f"⚠️ **Traceability Warning:** Untraceable tokens detected in draft: {', '.join(t_result.untraceable_items)}"
+                    )
+
+                if st.button("✅ Confirm and Log to Patient EMR", type="primary", use_container_width=True):
+                    pdata["confirmed_emr"].append({
+                        "logged_at": now_clock.strftime("%H:%M:%S"),
+                        "text": draft_text,
+                    })
+                    st.success("EMR Note confirmed and successfully committed to patient medical record.")
+
+            if pdata["confirmed_emr"]:
+                st.markdown("#### 📁 Committed Patient EMR Record")
+                for entry in pdata["confirmed_emr"]:
+                    st.code(f"Logged at {entry['logged_at']}:\n{entry['text']}", language="text")
 
             # Table of readings
             st.markdown("---")
@@ -234,28 +310,56 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
 
 
 # -----------------------------------------------------------------------------
-# MODE 2: Replay Readings & Scenarios (Issue #8)
+# MODE 2: Replay Readings & Scenarios (Issues #8 & #18)
 # -----------------------------------------------------------------------------
 elif app_mode == "⏱️ Replay Readings & Scenarios":
-    st.subheader("Replay Readings Over Time & Scenario Simulation")
-    st.write(
-        "Demonstrates Issue #8 playback capabilities: scrub through time-series readings, "
-        "observe countdown transitions, and inspect automated alerting."
+    st.subheader("Replay Readings Over Time & Unit Multi-Bed Simulation")
+    st.caption(
+        "Demonstrates Issues #8 & #18: steps through time across multiple patients, "
+        "evaluates unit state through EpisodeTracker, and provides live protocol countdowns."
     )
 
     base_time = datetime(2026, 10, 31, 10, 0)
-    scenarios = get_default_scenarios(base_time)
-    scenario_map = {s.name: s for s in scenarios}
 
-    selected_name = st.selectbox("Select Test Scenario:", list(scenario_map.keys()))
-    scenario = scenario_map[selected_name]
+    replay_options = [
+        "Unit Multi-Bed View (Beds 01–03)",
+        "Persistent Severe (Generator)",
+        "Non-Persistent Severe (Generator)",
+        "Delayed / Missing Repeat (Generator)",
+        "Recurrent Severe (Generator)",
+        "Borderline Severe (Generator)",
+    ]
+    st.session_state.replay_source = st.selectbox(
+        "Select Replay Source / Unit Configuration:",
+        replay_options,
+    )
 
-    st.markdown(f"**Scenario Description:** {scenario.description}")
-    st.markdown(f"**Expected Outcome:** `{scenario.expected_outcome}`")
+    # Build cohort readings
+    if st.session_state.replay_source == "Unit Multi-Bed View (Beds 01–03)":
+        # Multi-bed unit as required by Issue #8 and Issue #18
+        cohort = {
+            "Bed-01": generate_bp_readings("Bed-01", base_time, duration_hours=2, interval_minutes=15, scenario="non_hypertensive", seed=101),
+            "Bed-02": generate_bp_readings("Bed-02", base_time, duration_hours=2, interval_minutes=15, scenario="persistent_severe", seed=102),
+            "Bed-03": generate_bp_readings("Bed-03", base_time, duration_hours=2, interval_minutes=15, scenario="nonpersistent_severe", seed=103),
+        }
+    else:
+        # Generator scenario selected
+        scen_key = {
+            "Persistent Severe (Generator)": "persistent_severe",
+            "Non-Persistent Severe (Generator)": "nonpersistent_severe",
+            "Delayed / Missing Repeat (Generator)": "delayed_or_missing_repeat",
+            "Recurrent Severe (Generator)": "recurrent_severe",
+            "Borderline Severe (Generator)": "borderline_severe",
+        }[st.session_state.replay_source]
+
+        cohort = {
+            "Bed-04": generate_bp_readings("Bed-04", base_time, duration_hours=2, interval_minutes=15, scenario=scen_key, seed=42),
+            "Bed-05": generate_bp_readings("Bed-05", base_time, duration_hours=2, interval_minutes=15, scenario="non_hypertensive", seed=99),
+        }
 
     # Time Scrubber
     st.markdown("---")
-    max_minutes = 70
+    max_minutes = 75
     minute_val = st.slider(
         "⏱️ Replay Timeline (Simulated Minutes from T=0):",
         min_value=0,
@@ -276,67 +380,109 @@ elif app_mode == "⏱️ Replay Readings & Scenarios":
     simulated_now = base_time + timedelta(minutes=minute_val)
     st.markdown(f"**Virtual Clock:** `{simulated_now.strftime('%H:%M')} (T + {minute_val} min)`")
 
-    # Filter visible readings
-    visible_readings = filter_readings_up_to(scenario.readings, simulated_now)
-    status = evaluate_playback_episode(visible_readings, protocol, simulated_now=simulated_now)
+    # Evaluate Unit View (Issue #18)
+    unit_status = evaluate_unit_view(cohort, simulated_now, protocol)
+    all_readings = [r for rlist in cohort.values() for r in rlist]
+    latest_per_bed = latest_reading_per_patient(all_readings, simulated_now)
+
+    # Unit Overview Cards
+    st.markdown("### 🏥 L&D Unit Overview at Virtual Clock")
+    unit_cols = st.columns(len(cohort))
+    for i, (bed_id, status) in enumerate(unit_status.items()):
+        latest_r = latest_per_bed.get(bed_id)
+        with unit_cols[i]:
+            st.markdown(f"#### {bed_id}")
+            if latest_r:
+                severe_flag = "🚨 SEVERE" if is_severe(latest_r, protocol) else "🟢 NORMAL"
+                st.write(f"**Latest BP:** {latest_r.systolic}/{latest_r.diastolic} mmHg ({severe_flag})")
+                st.caption(f"Time: {latest_r.time.strftime('%H:%M')}")
+            else:
+                st.write("No readings yet.")
+
+            # Badge
+            phase_colors = {
+                EpisodePhase.NONE: "🟢 Normal",
+                EpisodePhase.REPEAT_PENDING: "🟡 Repeat Pending",
+                EpisodePhase.REPEAT_DUE: "🟠 Repeat Due",
+                EpisodePhase.REPEAT_OVERDUE: "🔴 Repeat Overdue",
+                EpisodePhase.CONFIRMED: "🚨 Confirmed Severe",
+                EpisodePhase.ESCALATED: "🚨 Escalated",
+                EpisodePhase.RESOLVED: "🟢 Resolved",
+            }
+            st.info(f"**State:** {phase_colors.get(status.phase, status.phase.value)}")
+
+    st.markdown("---")
+    focus_bed = st.selectbox("Inspect Bedside Detail & Events for:", list(cohort.keys()))
+    focus_status = unit_status[focus_bed]
+    focus_readings = filter_readings_up_to(cohort[focus_bed], simulated_now)
 
     r_col1, r_col2 = st.columns([1, 1], gap="large")
 
     with r_col1:
-        st.markdown("### 📊 Vital Signs Timeline")
+        st.markdown(f"### 📊 Vital Signs Timeline ({focus_bed})")
         all_df = pd.DataFrame([
             {
                 "Elapsed Min": int((r.time - base_time).total_seconds() // 60),
                 "Time": r.time.strftime("%H:%M"),
                 "Systolic": r.systolic,
                 "Diastolic": r.diastolic,
+                "Status": "🚨 Severe" if is_severe(r, protocol) else "Normal",
                 "Visible": "✅ Arrived" if r.time <= simulated_now else "⏳ Future",
             }
-            for r in scenario.readings
+            for r in cohort[focus_bed]
         ])
         st.dataframe(all_df, use_container_width=True)
 
-        # Plot blood pressure chart
         chart_df = pd.DataFrame({
-            "Elapsed Min": [int((r.time - base_time).total_seconds() // 60) for r in scenario.readings],
-            "Systolic": [r.systolic for r in scenario.readings],
-            "Diastolic": [r.diastolic for r in scenario.readings],
+            "Elapsed Min": [int((r.time - base_time).total_seconds() // 60) for r in cohort[focus_bed]],
+            "Systolic": [r.systolic for r in cohort[focus_bed]],
+            "Diastolic": [r.diastolic for r in cohort[focus_bed]],
         }).set_index("Elapsed Min")
         st.line_chart(chart_df)
 
     with r_col2:
-        st.markdown("### 🔔 Active Protocol Alerts at Current Minute")
+        st.markdown(f"### 🔔 EpisodeTracker Events ({focus_bed})")
 
-        if status.phase == EpisodePhase.ROUTINE_DUE:
-            st.info("🔔 Status: 15-Minute Routine Vital Re-check Notice to Nurse.")
-        elif status.phase == EpisodePhase.NONE:
-            st.success("🟢 Status: Normal reference range.")
-        elif status.phase == EpisodePhase.REPEAT_PENDING:
-            st.warning("🟡 Status: First severe reading recorded. 15-minute countdown active.")
-            if status.repeat_target_time:
-                _, _, disp = calculate_countdown(status.repeat_target_time, simulated_now)
+        if focus_status.phase == EpisodePhase.NONE:
+            st.success("🟢 Status: Normal reference range. Routine vitals monitoring.")
+        elif focus_status.phase == EpisodePhase.REPEAT_PENDING:
+            st.warning("🟡 Status: First severe reading recorded. 15-minute recheck countdown active.")
+            if focus_status.repeat_target_time:
+                _, _, disp = calculate_countdown(focus_status.repeat_target_time, simulated_now)
                 st.metric("Repeat Due In", disp)
-        elif status.phase == EpisodePhase.REPEAT_DUE:
-            st.error("🔴 Status: Repeat BP overdue!")
-            if status.repeat_target_time:
-                _, _, disp = calculate_countdown(status.repeat_target_time, simulated_now)
+        elif focus_status.phase == EpisodePhase.REPEAT_DUE:
+            st.warning("🟠 Status: Repeat blood pressure measurement due now!")
+        elif focus_status.phase == EpisodePhase.REPEAT_OVERDUE:
+            st.error("🔴 Status: Repeat blood pressure overdue!")
+            if focus_status.repeat_target_time:
+                _, _, disp = calculate_countdown(focus_status.repeat_target_time, simulated_now)
                 st.metric("Time Overdue", disp)
-        elif status.phase == EpisodePhase.CONFIRMED:
+        elif focus_status.phase == EpisodePhase.CONFIRMED:
             st.error("🚨 Status: Persistent severe hypertension confirmed.")
-            if status.treatment_target_time:
-                _, _, disp = calculate_countdown(status.treatment_target_time, simulated_now)
+            if focus_status.treatment_target_time:
+                _, _, disp = calculate_countdown(focus_status.treatment_target_time, simulated_now)
                 st.metric("Time to 60-min Treatment Deadline (from onset)", disp)
-        elif status.phase == EpisodePhase.RESOLVED:
-            st.success("🟢 Status: Episode resolved (non-severe repeat).")
-        elif status.phase == EpisodePhase.EXPIRED:
-            st.info("⚪ Status: Repeat window expired without confirmation.")
+        elif focus_status.phase == EpisodePhase.ESCALATED:
+            st.error("🚨 Status: Escalated to on-call physician / charge nurse.")
+        elif focus_status.phase == EpisodePhase.RESOLVED:
+            st.success("🟢 Status: Episode resolved (non-severe reading recorded).")
 
-        st.write(f"**Detail:** {status.detail}")
+        st.write(f"**Detail:** {focus_status.detail}")
 
-        if status.phase == EpisodePhase.CONFIRMED:
+        # List of emitted events
+        if focus_status.events:
+            st.markdown("#### Emitted Event Stream:")
+            for ev in focus_status.events:
+                st.write(f"- `{ev.time.strftime('%H:%M')}` **{ev.kind.value}**: {ev.detail}")
+
+            # AI EMR Draft Preview
             st.markdown("---")
-            st.markdown("#### 🤖 Downstream Autonomous Notification")
-            st.markdown(generate_sbar_handoff(scenario.readings[0].patient_id, status, visible_readings))
+            st.markdown("#### 📝 AI-Drafted EMR Note Preview")
+            emr_preview = draft_emr_entry(focus_status.events)
+            st.code(emr_preview, language="text")
+            trace = verify_traceability(emr_preview, focus_status.events)
+            if trace.valid:
+                st.caption(f"🛡️ Traceability check passed: {len(trace.grounded_items)} verified elements.")
 
 
 # -----------------------------------------------------------------------------
@@ -346,7 +492,7 @@ else:
     st.subheader("Open Clinical Benchmark Dataset Explorer")
     st.write(
         "Grounding the prototype in open, de-identified maternal health benchmark data "
-        "([UCI / Kaggle Maternal Health Risk Dataset](https://archive.ics.uci.edu/dataset/863/maternal+health+risk))."
+        "([UCI Maternal Health Risk Dataset](https://archive.ics.uci.edu/dataset/863/maternal+health+risk))."
     )
 
     records = load_baseline_records()
