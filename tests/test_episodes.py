@@ -107,3 +107,4 @@ def test_second_episode_after_60_minutes():
     assert len(second_onset) == 1
     assert second_onset[0].kind == EventKind.EPISODE_OPENED
     assert second_onset[0].time == t75
+

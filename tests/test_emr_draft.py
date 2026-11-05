@@ -96,3 +96,4 @@ def test_custom_llm_callable_interface():
     assert "168/112" in draft
     res = verify_traceability(draft, events)
     assert res.valid is True
+
