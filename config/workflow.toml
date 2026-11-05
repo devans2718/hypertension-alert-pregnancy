@@ -1,6 +1,6 @@
 # Synthetic staff delays, not measured Mosaic performance or treatment guidance.
-# All parameters are Assume: the values already used in PR #7.
-# Recognition remains 3–15 minutes here; changing the model is a later issue.
+# All parameters are Assume. Existing delay ranges are retained from PR #7;
+# the coupled controls below make their causal roles explicit for issue #20.
 
 [delays]
 recognition_minutes = [3, 15] # Assume: inclusive uniform delay from first severe BP.
@@ -13,3 +13,16 @@ readiness_minutes = [0, 18] # Assume: projected reassessment workload delay.
 
 [randomness]
 recheck_seed_offset = 1000 # Assume: independent projection RNG, preserving earlier draws.
+
+# Only the coupled model uses these controls. No clinical protocol is replaced.
+[coupled]
+clock_step_minutes = 1 # Assume: whole-minute scheduler, matching the tracker's boundary tests.
+provider_search_overlaps_reassessment = false # Assume: conservative serial default; vary explicitly.
+nurse_available_after_minutes = 0 # Assume: availability offset from simulation start, shared by paired arms.
+clinician_available_after_minutes = 0 # Assume: availability offset from simulation start, shared by paired arms; unaffected by tool.
+decision_minutes = [0, 0] # Assume: decision time after acknowledgment AND actual severe reassessment.
+treatment_authorized = true # Assume: scripted clinician policy authorizes treatment only after actual severe reassessment and tracker confirmation.
+contact_succeeds = true # Assume: contact completes unless this experiment disables it.
+resolution_blocks_dose = true # Assume: idealized current-BP truth gate cancels a dose after spontaneous resolution; not a real observation or clinical decision rule.
+deadline_escalation_enabled = false # Assume: opt-in prototype reminder, NOT Daniel's escalation rule or an approved protocol.
+deadline_escalation_lead_minutes = 10 # Assume: reminder at deadline minus this lead, if confirmed, open, and unanswered.

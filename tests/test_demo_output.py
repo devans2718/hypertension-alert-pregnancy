@@ -3,8 +3,10 @@
 import hashlib
 import re
 import runpy
+import sys
 from dataclasses import asdict
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -15,10 +17,10 @@ from htn_alert.workflow import PROVIDER_PATHWAYS, simulate_workflow
 SOURCE_DIR = Path(__file__).resolve().parents[1] / 'src' / 'htn_alert'
 TIMING_DEMOS = ('workflow', 'paired_simulation', 'cohort_evaluation', 'sensitivity_analysis')
 
-# Captured before the display fix. Default text, values and spacing must survive.
+# Archival demonstration snapshots. Issue #20 corrects workflow's projected-dose label.
 DEFAULT_OUTPUT_HASHES = {
     'generator': '2faff935eef8dd160c7a6f930be8fee8f2a36f87c4a653a38073588aad927915',
-    'workflow': '6ddd491399e94355f1564ce0056ebd4314261cd3ab13e35a334f10e7c174608d',
+    'workflow': 'd1c383a5338008b54fdc87974b656c518ee7d4082a6c0b7824d9edf8b55b7fd5',
     'paired_simulation': 'e83745bdf95a3660e71b176ab6e2c8f5367632c651d5466dd33663a481de4c20',
     'cohort_evaluation': 'a9fe7f33ead04de577b4fdbdee3d56e1d6daa2219be25c7cb22ac87f0703f128',
     'sensitivity_analysis': 'a28a161c3a2add8238aa0cf7f591537b4a9c0e7e1cb4e62faa59fdf603784f24',
@@ -36,8 +38,10 @@ def configured_protocol(tmp_path, repeat_minutes, treatment_minutes):
 
 
 def run_demo(module):
-    # Executes the real __main__ block without a subprocess or editing config.
-    return runpy.run_path(str(SOURCE_DIR / f'{module}.py'), run_name='__main__')
+    # Preserve the archived projection regressions while default demos now use
+    # the coupled event model. New default-output tests live below.
+    with patch.object(sys, 'argv', [module, '--legacy']):
+        return runpy.run_path(str(SOURCE_DIR / f'{module}.py'), run_name='__main__')
 
 
 @pytest.mark.parametrize('module', TIMING_DEMOS)
@@ -117,3 +121,50 @@ def test_default_demo_output_is_unchanged(module, capsys):
     run_demo(module)
     output = capsys.readouterr().out
     assert hashlib.sha256(output.encode()).hexdigest() == DEFAULT_OUTPUT_HASHES[module]
+
+
+@pytest.mark.parametrize('module', (*TIMING_DEMOS, 'generator'))
+def test_default_demo_uses_actual_coupled_model(module, monkeypatch, capsys):
+    monkeypatch.setattr(sys, 'argv', [module])
+    with pytest.raises(SystemExit):
+        runpy.run_path(str(SOURCE_DIR / f'{module}.py'), run_name='__main__')
+    output = capsys.readouterr().out
+    assert 'COUPLED SYNTHETIC SIMULATION' in output
+    assert 'assumptions, not hospital outcomes' in output
+    assert 'Projected recheck' not in output
+
+
+@pytest.mark.parametrize('module', TIMING_DEMOS)
+def test_coupled_labels_and_results_share_nondefault_protocol(tmp_path, monkeypatch, capsys, module):
+    protocol = configured_protocol(tmp_path, 20, 35)
+    monkeypatch.setattr('htn_alert.simulation_demo.load_protocol', lambda: protocol)
+    monkeypatch.setattr(sys, 'argv', [module])
+    with pytest.raises(SystemExit):
+        runpy.run_path(str(SOURCE_DIR / f'{module}.py'), run_name='__main__')
+    output = capsys.readouterr().out
+    assert 'Reassessment target: 20 minutes; treatment target: 35 minutes' in output
+    assert 'treatment target: 60' not in output
+    from htn_alert.generator import generate_course_cohort
+    from htn_alert.cohort_evaluation import evaluate_coupled_cohort
+    from htn_alert.sensitivity_analysis import run_coupled_sensitivity_analysis
+    expected = evaluate_coupled_cohort(generate_course_cohort(protocol=protocol), protocol=protocol)
+    assert all(e.deadline - e.onset == protocol.treatment_target for e in expected.baseline_events.episodes)
+    if module in ('workflow', 'paired_simulation'):
+        pair = next(p for p in expected.patients if p.baseline.first_severe_time is not None)
+        for result in (pair.baseline, pair.tool):
+            assert f'completed medication: {result.medication_time}' in output
+            for task in result.reassessments:
+                assert f'target: {task.target_time}' in output
+    elif module == 'cohort_evaluation':
+        assert f'synthetic patient rate: {expected.baseline_events.patient_rate}' in output
+        assert f'synthetic patient rate: {expected.tool_events.patient_rate}' in output
+    else:
+        for row in run_coupled_sensitivity_analysis(generate_course_cohort(protocol=protocol), protocol=protocol):
+            assert str(row) in output
+
+
+def test_legacy_dose_timestamp_is_labeled_as_projection(capsys):
+    run_demo('workflow')
+    output = capsys.readouterr().out
+    assert 'Medication administered:' not in output
+    assert 'Projected medication time (legacy):' in output

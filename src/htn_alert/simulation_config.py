@@ -13,6 +13,12 @@ GENERATOR_PATH = CONFIG_DIR / "generator.toml"
 WORKFLOW_PATH = CONFIG_DIR / "workflow.toml"
 
 
+def _boolean(value: object, name: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{name} must be a boolean.")
+    return value
+
+
 def _integer(value: object, name: str, minimum: int = 0) -> int:
     if type(value) is not int or value < minimum:
         raise ValueError(f"{name} must be an integer >= {minimum}.")
@@ -152,3 +158,77 @@ def load_workflow_config(path: Path = WORKFLOW_PATH) -> WorkflowConfig:
         )},
         recheck_seed_offset=_integer(raw["randomness"]["recheck_seed_offset"], "recheck_seed_offset"),
     )
+
+
+@dataclass(frozen=True)
+class CourseConfig:
+    """Exogenous synthetic change points, kept separate from recorded readings."""
+
+    routine_intervals_minutes: tuple[int, ...]
+    minimum_measurement_minutes: int
+    onset_minutes: tuple[int, ...]
+    resolved_bp: tuple[int, int]
+    profiles: dict[str, tuple[tuple[int, bool], ...]]
+
+
+def load_course_config(path: Path = GENERATOR_PATH) -> CourseConfig:
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)["course"]
+    minimum = _integer(raw["minimum_measurement_minutes"], "minimum_measurement_minutes", 1)
+    cycles = tuple(_integer(v, "routine_intervals_minutes", minimum) for v in raw["routine_intervals_minutes"])
+    onsets = tuple(_integer(v, "course.onset_minutes") for v in raw["onset_minutes"])
+    if not cycles or not onsets:
+        raise ValueError("Course cycles and onsets cannot be empty.")
+    bp = tuple(_integer(v, "resolved_bp", 1) for v in raw["resolved_bp"])
+    if len(bp) != 2:
+        raise ValueError("resolved_bp needs two pressures.")
+    profiles = {}
+    for name, profile in raw["profiles"].items():
+        rows = profile["phases"]
+        if not isinstance(rows, list) or any(not isinstance(row, list) or len(row) != 2 for row in rows):
+            raise ValueError("Each phase needs an offset and a boolean state.")
+        phases = tuple((_integer(row[0], name), _boolean(row[1], name)) for row in rows)
+        offsets = [row[0] for row in phases]
+        if offsets != sorted(set(offsets)):
+            raise ValueError("Course phases must have unique increasing offsets.")
+        profiles[name] = phases
+    return CourseConfig(cycles, minimum, onsets, bp, profiles)
+
+
+@dataclass(frozen=True)
+class CoupledConfig:
+    """Prototype scheduling/decision assumptions; never episode definitions."""
+
+    clock_step_minutes: int
+    provider_search_overlaps_reassessment: bool
+    nurse_available_after_minutes: int
+    clinician_available_after_minutes: int
+    decision_minutes: tuple[int, int]
+    treatment_authorized: bool
+    contact_succeeds: bool
+    resolution_blocks_dose: bool
+    deadline_escalation_enabled: bool
+    deadline_escalation_lead_minutes: int
+
+
+def load_coupled_config(path: Path = WORKFLOW_PATH) -> CoupledConfig:
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)["coupled"]
+    step = _integer(raw["clock_step_minutes"], "clock_step_minutes", 1)
+    if step != 1:
+        raise ValueError("The coupled scheduler currently requires a one-minute clock step.")
+    result = CoupledConfig(
+        clock_step_minutes=step,
+        **{key: _boolean(raw[key], key) for key in (
+            "provider_search_overlaps_reassessment", "treatment_authorized",
+            "contact_succeeds", "resolution_blocks_dose", "deadline_escalation_enabled",
+        )},
+        **{key: _integer(raw[key], key) for key in (
+            "nurse_available_after_minutes", "clinician_available_after_minutes",
+            "deadline_escalation_lead_minutes",
+        )},
+        decision_minutes=_range(raw["decision_minutes"], "decision_minutes", 0),
+    )
+    if not result.resolution_blocks_dose:
+        raise ValueError("Disabling the prototype resolution safety gate is not supported.")
+    return result
