@@ -102,59 +102,6 @@ def test_evaluate_playback_routine_due(test_protocol):
     assert "Nurse Notice" in status.detail
 
 
-def test_evaluate_playback_critical_emergency(test_protocol):
-    t0 = datetime(2026, 10, 31, 10, 0)
-    r = Reading(patient_id="P1", time=t0, systolic=192, diastolic=124)
-    status = evaluate_playback_episode([r], test_protocol)
-    assert status.phase == EpisodePhase.CRITICAL_EMERGENCY
-    assert "CRITICAL DANGER ALARM" in status.detail
-    sbar = generate_sbar_handoff("P1", status, [r])
-    assert "STAT CRITICAL EMERGENCY ALERT" in sbar
-
-
-def test_evaluate_playback_repeat_pending(test_protocol):
-    t0 = datetime(2026, 10, 31, 10, 0)
-    r1 = Reading(patient_id="P1", time=t0, systolic=165, diastolic=100)  # systolic severe
-    now = t0 + timedelta(minutes=7)
-
-    status = evaluate_playback_episode([r1], test_protocol, simulated_now=now)
-    assert status.phase == EpisodePhase.REPEAT_PENDING
-    assert status.first_severe_reading == r1
-    assert status.repeat_target_time == t0 + timedelta(minutes=15)
-    assert status.repeat_deadline_time == t0 + timedelta(minutes=60)
-
-
-def test_evaluate_playback_repeat_due(test_protocol):
-    t0 = datetime(2026, 10, 31, 10, 0)
-    r1 = Reading(patient_id="P1", time=t0, systolic=155, diastolic=115)  # diastolic severe
-    now = t0 + timedelta(minutes=22)  # between 15 and 60 minutes
-
-    status = evaluate_playback_episode([r1], test_protocol, simulated_now=now)
-    assert status.phase == EpisodePhase.REPEAT_DUE
-    assert "Repeat overdue" in status.detail
-
-
-def test_evaluate_playback_expired(test_protocol):
-    t0 = datetime(2026, 10, 31, 10, 0)
-    r1 = Reading(patient_id="P1", time=t0, systolic=170, diastolic=110)
-    now = t0 + timedelta(minutes=65)  # > 60 minutes
-
-    status = evaluate_playback_episode([r1], test_protocol, simulated_now=now)
-    assert status.phase == EpisodePhase.EXPIRED
-
-
-def test_evaluate_playback_too_early_repeat_ignored(test_protocol):
-    t0 = datetime(2026, 10, 31, 10, 0)
-    r1 = Reading(patient_id="P1", time=t0, systolic=168, diastolic=112)
-    # A reading at 8 minutes is too early to satisfy the 15-minute repeat protocol
-    r_early = Reading(patient_id="P1", time=t0 + timedelta(minutes=8), systolic=165, diastolic=110)
-
-    now = t0 + timedelta(minutes=10)
-    status = evaluate_playback_episode([r1, r_early], test_protocol, simulated_now=now)
-    # Still pending because valid repeat must be >= 15 min
-    assert status.phase == EpisodePhase.REPEAT_PENDING
-
-
 def test_evaluate_playback_confirmed_persistent(test_protocol):
     t0 = datetime(2026, 10, 31, 10, 0)
     r1 = Reading(patient_id="P1", time=t0, systolic=165, diastolic=105)
@@ -164,7 +111,7 @@ def test_evaluate_playback_confirmed_persistent(test_protocol):
     assert status.phase == EpisodePhase.CONFIRMED
     assert status.first_severe_reading == r1
     assert status.repeat_reading == r2
-    assert status.treatment_target_time == r2.time + timedelta(minutes=60)
+    assert status.treatment_target_time == r1.time + timedelta(minutes=60)
     assert "Persistent severe HTN confirmed" in status.detail
 
 

@@ -16,10 +16,9 @@ from htn_alert.rules import is_severe
 
 
 class EpisodePhase(str, Enum):
-    """Clinical progression phases for severe hypertension tracking."""
+    """Clinical progression phases for severe hypertension tracking per SMFM."""
 
     NONE = "none"
-    CRITICAL_EMERGENCY = "critical_emergency"  # extreme danger range (>=180 or >=120 mmHg) -> immediate alarm
     ROUTINE_DUE = "routine_due"                # routine 15-min interval reached -> notice to nurse
     REPEAT_PENDING = "repeat_pending"          # severe reading recorded; waiting for the 15-min repeat window
     REPEAT_DUE = "repeat_due"                  # >=15 min and <=60 min since first severe; recheck is due
@@ -103,19 +102,7 @@ def evaluate_playback_episode(
 
     latest = sorted_readings[-1]
 
-    # Extreme dangerous crisis range (systolic >= 180 or diastolic >= 120 mmHg)
-    # Triggers an immediate bedside alarm for the nurse!
-    if latest.systolic >= 180 or latest.diastolic >= 120:
-        return EpisodeStatus(
-            phase=EpisodePhase.CRITICAL_EMERGENCY,
-            first_severe_reading=latest,
-            detail=(
-                f"🚨 CRITICAL DANGER ALARM ({latest.systolic}/{latest.diastolic} mmHg) — "
-                f"Extreme danger threshold exceeded! Immediate bedside nurse intervention and stat provider notification required!"
-            ),
-        )
-
-    # Find first severe reading
+    # Find first severe reading (onset per SMFM)
     first_severe_idx = next(
         (i for i, r in enumerate(sorted_readings) if is_severe(r, protocol)),
         None,
@@ -155,7 +142,8 @@ def evaluate_playback_episode(
 
         if elapsed <= protocol.repeat_max:
             if is_severe(repeat, protocol):
-                treatment_deadline = repeat.time + protocol.treatment_target
+                # Treatment target counts from onset per SMFM Table 1
+                treatment_deadline = first_severe.time + protocol.treatment_target
                 return EpisodeStatus(
                     phase=EpisodePhase.CONFIRMED,
                     first_severe_reading=first_severe,
@@ -226,21 +214,8 @@ def generate_sbar_handoff(
     Intent: Demonstrates autonomous agent communication capability upon
     confirmation of severe range blood pressure.
     """
-    if status.phase == EpisodePhase.CRITICAL_EMERGENCY and status.first_severe_reading:
-        r = status.first_severe_reading
-        return (
-            f"**🚨 STAT CRITICAL EMERGENCY ALERT:**\n"
-            f"**SITUATION:** Immediate bedside physician alert for Patient {patient_id}. Extreme hypertensive crisis ({r.systolic}/{r.diastolic} mmHg).\n\n"
-            f"**BACKGROUND:** Recorded at {r.time.strftime('%H:%M')}. Systolic ≥ 180 or Diastolic ≥ 120 mmHg represents an acute hypertensive emergency.\n\n"
-            f"**ASSESSMENT:** Extreme maternal stroke and eclampsia risk. Immediate action required without waiting for a repeat observation window.\n\n"
-            f"**RECOMMENDATION:**\n"
-            f"- Attending physician bedside arrival STAT.\n"
-            f"- Order immediate first-line IV antihypertensive (IV labetalol / hydralazine).\n"
-            f"- Initiate seizure precautions and IV magnesium sulfate protocol."
-        )
-
     if status.phase != EpisodePhase.CONFIRMED or not status.first_severe_reading or not status.repeat_reading:
-        return "SBAR handoff is only generated upon confirmed persistent severe hypertension or critical crisis."
+        return "SBAR handoff is only generated upon confirmed persistent severe hypertension."
 
     r1 = status.first_severe_reading
     r2 = status.repeat_reading

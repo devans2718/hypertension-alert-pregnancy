@@ -99,16 +99,12 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
 
         # Quick Test Case Prefill Buttons
         st.write("**Quick-Fill Clinical Test Cases:**")
-        qcol1, qcol2, qcol3 = st.columns(3)
-        if qcol1.button("🚨 1. Danger Crisis (192/124)"):
-            st.session_state.sys_val = 192
-            st.session_state.dia_val = 124
-            st.session_state.sim_delta_val = 0
-        if qcol2.button("🟡 2. Severe BP (168/112)"):
+        qcol1, qcol2 = st.columns(2)
+        if qcol1.button("🟡 1. Severe Onset (168/112)"):
             st.session_state.sys_val = 168
             st.session_state.dia_val = 112
             st.session_state.sim_delta_val = 0
-        if qcol3.button("🟢 3. Normal Routine (120/78)"):
+        if qcol2.button("🟢 2. Normal Routine (120/78)"):
             st.session_state.sys_val = 120
             st.session_state.dia_val = 78
             st.session_state.sim_delta_val = 0
@@ -162,16 +158,7 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
             status = evaluate_playback_episode(readings, protocol, simulated_now=now_clock)
 
             # Render Status Card
-            if status.phase == EpisodePhase.CRITICAL_EMERGENCY:
-                st.error("🚨 **CRITICAL DANGER ALARM — IMMEDIATE NURSE ALARM!**")
-                st.markdown(
-                    "⚠️ **Extreme Danger Range (≥180/120 mmHg):** "
-                    "Do NOT wait 15 minutes! Immediate bedside nurse intervention, seizure precautions, "
-                    "and STAT provider notification required."
-                )
-                st.write(status.detail)
-
-            elif status.phase == EpisodePhase.ROUTINE_DUE:
+            if status.phase == EpisodePhase.ROUTINE_DUE:
                 st.info("🔔 **15-MINUTE NURSE NOTICE: ROUTINE RE-CHECK DUE**")
                 st.markdown(
                     "15 minutes have elapsed since the baseline normal check. "
@@ -210,14 +197,14 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
                     rem_sec, is_overdue, display_str = calculate_countdown(status.treatment_target_time, now_clock)
                     t_prog = max(0.0, min(1.0, 1.0 - (rem_sec / 3600.0)))
                     st.metric("60-Min Medication Target Countdown", display_str)
-                    st.progress(t_prog, text="National 60-minute time-to-treatment standard")
+                    st.progress(t_prog, text="National 60-minute time-to-treatment standard (from onset)")
 
             elif status.phase == EpisodePhase.RESOLVED:
                 st.success("🟢 **EPISODE RESOLVED (UNCONFIRMED)**")
                 st.write(status.detail)
 
             # Downstream Agentic Communication
-            if status.phase in (EpisodePhase.CONFIRMED, EpisodePhase.CRITICAL_EMERGENCY):
+            if status.phase == EpisodePhase.CONFIRMED:
                 st.markdown("---")
                 st.markdown("### 🤖 Autonomous Agent Downstream Communication")
                 sbar_text = generate_sbar_handoff(patient_id, status, readings)
@@ -320,9 +307,7 @@ elif app_mode == "⏱️ Replay Readings & Scenarios":
     with r_col2:
         st.markdown("### 🔔 Active Protocol Alerts at Current Minute")
 
-        if status.phase == EpisodePhase.CRITICAL_EMERGENCY:
-            st.error("🚨 Status: CRITICAL DANGER ALARM — Immediate nurse and provider alert!")
-        elif status.phase == EpisodePhase.ROUTINE_DUE:
+        if status.phase == EpisodePhase.ROUTINE_DUE:
             st.info("🔔 Status: 15-Minute Routine Vital Re-check Notice to Nurse.")
         elif status.phase == EpisodePhase.NONE:
             st.success("🟢 Status: Normal reference range.")
@@ -340,7 +325,7 @@ elif app_mode == "⏱️ Replay Readings & Scenarios":
             st.error("🚨 Status: Persistent severe hypertension confirmed.")
             if status.treatment_target_time:
                 _, _, disp = calculate_countdown(status.treatment_target_time, simulated_now)
-                st.metric("Time to 60-min Treatment Deadline", disp)
+                st.metric("Time to 60-min Treatment Deadline (from onset)", disp)
         elif status.phase == EpisodePhase.RESOLVED:
             st.success("🟢 Status: Episode resolved (non-severe repeat).")
         elif status.phase == EpisodePhase.EXPIRED:
@@ -348,7 +333,7 @@ elif app_mode == "⏱️ Replay Readings & Scenarios":
 
         st.write(f"**Detail:** {status.detail}")
 
-        if status.phase in (EpisodePhase.CONFIRMED, EpisodePhase.CRITICAL_EMERGENCY):
+        if status.phase == EpisodePhase.CONFIRMED:
             st.markdown("---")
             st.markdown("#### 🤖 Downstream Autonomous Notification")
             st.markdown(generate_sbar_handoff(scenario.readings[0].patient_id, status, visible_readings))

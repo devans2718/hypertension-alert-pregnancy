@@ -33,32 +33,10 @@ def get_default_scenarios(base_time: datetime | None = None) -> list[NurseScenar
     if base_time is None:
         base_time = datetime(2026, 10, 31, 10, 0)
 
-    # 1. Immediate Crisis / Dangerous BP
-    s0 = NurseScenario(
-        id="scenario_danger",
-        name="🚨 1. Extreme Crisis / Dangerous BP (Immediate Nurse Alarm)",
-        description="Extreme danger reading 192/124 mmHg (≥180/120 mmHg).",
-        expected_outcome="Immediately triggers high-urgency bedside nurse alarm and stat provider SBAR dispatch.",
-        readings=[
-            Reading(patient_id="P-CRISIS", time=base_time, systolic=192, diastolic=124),
-        ],
-    )
-
-    # 2. Normal Routine Check (15-Minute Notice)
-    s4 = NurseScenario(
-        id="scenario_normal",
-        name="🟢 2. Routine Normal Monitoring (15-Min Notice to Nurse)",
-        description="Normal baseline 120/78 mmHg. Demonstrates scheduled 15-minute notice to nurse.",
-        expected_outcome="Normotensive at T=0. At T=15 min, issues a scheduled routine vital re-assessment notice to nurse.",
-        readings=[
-            Reading(patient_id="P-NORM", time=base_time, systolic=120, diastolic=78),
-        ],
-    )
-
-    # 3. Confirmed Persistent Severe HTN
+    # 1. Confirmed Persistent Severe HTN
     s1 = NurseScenario(
         id="scenario_confirmed",
-        name="🔁 3. Standard Severe BP -> 15m Repeat -> Confirmed",
+        name="1. Confirmed Severe Hypertension",
         description="Initial reading 168/112 mmHg; repeat reading at 16 min is 164/108 mmHg.",
         expected_outcome="Starts 15-min countdown, confirms persistent severe HTN at 16 min, starts 60-min medication target.",
         readings=[
@@ -67,10 +45,10 @@ def get_default_scenarios(base_time: datetime | None = None) -> list[NurseScenar
         ],
     )
 
-    # 4. Transient Severe (Resolved)
+    # 2. Transient Severe (Resolved)
     s2 = NurseScenario(
         id="scenario_resolved",
-        name="✅ 4. Transient Severe BP -> 15m Repeat -> Resolved",
+        name="2. Transient Severe (Resolved)",
         description="Initial severe reading 162/98 mmHg; repeat reading at 18 min drops to 134/86 mmHg.",
         expected_outcome="Episode resolves and closes as unconfirmed transient elevation.",
         readings=[
@@ -79,14 +57,25 @@ def get_default_scenarios(base_time: datetime | None = None) -> list[NurseScenar
         ],
     )
 
-    # 5. Repeat Overdue
+    # 3. Repeat Overdue
     s3 = NurseScenario(
         id="scenario_overdue",
-        name="⏰ 5. Severe BP -> Delayed Recheck (Repeat Overdue Alarm)",
+        name="3. Delayed Recheck (Repeat Overdue)",
         description="Initial severe reading 174/116 mmHg; >15 minutes elapse with no repeat reading.",
         expected_outcome="Repeat due alarm fires at 15 min prompting bedside nurse to recheck.",
         readings=[
             Reading(patient_id="P-103", time=base_time, systolic=174, diastolic=116),
+        ],
+    )
+
+    # 4. Normal Routine Check (15-Minute Notice)
+    s4 = NurseScenario(
+        id="scenario_normal",
+        name="4. Routine Normal Monitoring",
+        description="Normal baseline 120/78 mmHg. Demonstrates scheduled 15-minute notice to nurse.",
+        expected_outcome="Normotensive at T=0. At T=15 min, issues a scheduled routine vital re-assessment notice to nurse.",
+        readings=[
+            Reading(patient_id="P-NORM", time=base_time, systolic=120, diastolic=78),
         ],
     )
 
@@ -120,5 +109,5 @@ def get_default_scenarios(base_time: datetime | None = None) -> list[NurseScenar
         readings=s5_readings,
     )
 
-    return [s0, s4, s1, s2, s3, s5]
+    return [s1, s2, s3, s4, s5]
 

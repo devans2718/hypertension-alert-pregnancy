@@ -37,7 +37,7 @@ def load_baseline_records(
         return []
 
     records = []
-    with open(csv_path, mode="r", encoding="utf-8") as f:
+    with open(csv_path, mode="r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for i, row in enumerate(reader, start=1):
             try:
