@@ -1,6 +1,10 @@
 
 """Cohort-level synthetic workflow evaluation for OB-Response.
 
+PatientCourse cohorts/default demos retain every patient and evaluate engine
+events. List cohorts below retain the archived 20-of-80 projection experiment,
+whose timing counts must not be confused with the new patient-level measure.
+
 Uses the existing synthetic BP generator and paired workflow simulator.
 
 Primary focus:
@@ -23,12 +27,114 @@ from datetime import datetime
 from statistics import mean
 
 from htn_alert.contract import Reading
-from htn_alert.generator import generate_cohort
-from htn_alert.paired_simulation import compare_workflows
+from htn_alert.generator import PatientCourse, generate_cohort
+from htn_alert.paired_simulation import CoupledPairedResult, compare_patient_course, compare_workflows
 from htn_alert.protocol import Protocol, load_protocol
 from htn_alert.rules import is_severe
 from htn_alert.simulation_config import WorkflowConfig, load_workflow_config
 from htn_alert.workflow import PROVIDER_PATHWAYS, find_severe_repeat_in_window
+from htn_alert.evaluate import EventEvaluation
+from htn_alert.simulation_config import CoupledConfig, load_coupled_config
+
+
+@dataclass(frozen=True)
+class OperationalSummary:
+    """Explicit task coverage alongside, never substituted for, event metrics."""
+
+    patients: int
+    completed_doses: int
+    no_dose_patients: int
+    missed_reassessments: int
+    missed_urgent_tasks: int
+    average_reassessment_minutes_late: float | None
+    completed_notifications: int
+    average_notification_minutes_from_onset: float | None
+    no_dose_reasons: tuple[tuple[str, int], ...]
+    patient_statuses: tuple[tuple[str, int], ...]
+
+
+def _operational_summary(arms) -> OperationalSummary:
+    lateness = [r.minutes_late for arm in arms for r in arm.reassessments]
+    notifications = [row for arm in arms for row in arm.trace if row.kind == "provider_notified"]
+    reasons = [arm.no_dose_reason for arm in arms if arm.no_dose_reason is not None]
+    statuses = [p.status for arm in arms for p in arm.evaluation.patients]
+    return OperationalSummary(len(arms),
+        sum(e.kind.value == "dose_recorded" for arm in arms for e in arm.events),
+        sum(arm.medication_time is None for arm in arms),
+        sum(arm.missed_reassessments for arm in arms),
+        sum(row.kind == "urgent_reassessment_missed" for arm in arms for row in arm.trace),
+        _average(lateness), len(notifications),
+        _average([(row.time - row.episode_onset).total_seconds() / 60 for row in notifications]),
+        tuple((reason, reasons.count(reason)) for reason in sorted(set(reasons))),
+        tuple((status, statuses.count(status)) for status in sorted(set(statuses))))
+
+
+@dataclass(frozen=True)
+class CoupledCohortEvaluation:
+    """All preselected patients retained, including censored and no-dose arms."""
+
+    patients: tuple[CoupledPairedResult, ...]
+    baseline_events: EventEvaluation
+    tool_events: EventEvaluation
+
+    @property
+    def baseline_operations(self) -> OperationalSummary:
+        return _operational_summary([p.baseline for p in self.patients])
+
+    @property
+    def tool_operations(self) -> OperationalSummary:
+        return _operational_summary([p.tool for p in self.patients])
+
+    @property
+    def total_patients(self) -> int:
+        return len(self.patients)
+
+    @property
+    def average_reassessment_minutes_saved(self) -> float | None:
+        return _average([p.reassessment_minutes_saved for p in self.patients])
+
+    @property
+    def average_medication_minutes_saved(self) -> float | None:
+        return _average([p.medication_minutes_saved for p in self.patients])
+
+    @property
+    def comparable_dose_pairs(self) -> int:
+        return sum(p.medication_minutes_saved is not None for p in self.patients)
+
+    @property
+    def discordant_classifications(self) -> int:
+        return sum(tuple((e.onset, e.persistent) for e in p.baseline.evaluation.episodes)
+                   != tuple((e.onset, e.persistent) for e in p.tool.evaluation.episodes) for p in self.patients)
+
+
+def evaluate_coupled_cohort(
+    cohort: dict[str, PatientCourse], prompt_effect: float = 0.5, seed: int = 42, *,
+    protocol: Protocol | None = None, workflow_config: WorkflowConfig | None = None,
+    coupled_config: CoupledConfig | None = None, missing_recheck: bool = False,
+) -> CoupledCohortEvaluation:
+    """Evaluate each arm over its own actual observations and engine events.
+
+    The cohort never depends on arm-specific persistence. A patient with a
+    missing dose is retained, and cannot create numerical 'minutes saved'.
+    Per-patient horizons are respected before aggregating summaries.
+    """
+    if not 0 <= prompt_effect <= 1:
+        raise ValueError("prompt_effect must be between zero and one.")
+    protocol = protocol if protocol is not None else load_protocol()
+    workflow_config = workflow_config if workflow_config is not None else load_workflow_config()
+    cc = coupled_config if coupled_config is not None else load_coupled_config()
+    patients = []
+    for index, (pid, course) in enumerate(sorted(cohort.items())):
+        if not isinstance(course, PatientCourse) or course.patient_id != pid:
+            raise ValueError("Cohort must map matching IDs to PatientCourse objects.")
+        patients.append(compare_patient_course(course, PROVIDER_PATHWAYS[index % len(PROVIDER_PATHWAYS)],
+            seed + index, prompt_effect, missing_recheck, protocol=protocol,
+            workflow_config=workflow_config, coupled_config=cc))
+    def combine(mode):
+        evaluations = [getattr(p, mode).evaluation for p in patients]
+        return EventEvaluation(tuple(e for v in evaluations for e in v.episodes),
+                               tuple(p for v in evaluations for p in v.patients))
+    return CoupledCohortEvaluation(tuple(patients), combine("baseline"), combine("tool"))
 
 
 @dataclass(frozen=True)
@@ -109,6 +215,7 @@ def _has_severe_repeat_in_window(
 ) -> bool:
     """Check for an existing severe repeat at 15–60 min, using protocol bounds.
 
+    Deprecated archival projection helper; unused by coupled event evaluation.
     This reuses the workflow's limited eligibility lookup, not a persistence
     algorithm. Missing early below-severe readings and full SMFM persistence
     belong to Daniel's episode engine and examples in issue #9:
@@ -118,13 +225,14 @@ def _has_severe_repeat_in_window(
 
 
 def evaluate_cohort(
-    cohort: dict[str, list[Reading]],
+    cohort: dict[str, list[Reading]] | dict[str, PatientCourse],
     prompt_effect: float = 0.5,
     seed: int = 42,
     *,
     protocol: Protocol | None = None,
     workflow_config: WorkflowConfig | None = None,
-) -> CohortEvaluation:
+    coupled_config: CoupledConfig | None = None,
+) -> CohortEvaluation | CoupledCohortEvaluation:
     """Evaluate supported synthetic patient workflows.
 
     The same patient observations, pathway and random seed
@@ -135,6 +243,10 @@ def evaluate_cohort(
 
     Unsupported patients remain visible in the summary.
     """
+
+    if cohort and all(isinstance(v, PatientCourse) for v in cohort.values()):
+        return evaluate_coupled_cohort(cohort, prompt_effect, seed, protocol=protocol,
+            workflow_config=workflow_config, coupled_config=coupled_config)
 
     if not 0.0 <= prompt_effect <= 1.0:
         raise ValueError(
@@ -294,6 +406,11 @@ def _display(value: float | None) -> str:
 
 
 if __name__ == "__main__":
+    import sys
+    if "--legacy" not in sys.argv:
+        from htn_alert.simulation_demo import demo
+        demo("cohort_evaluation")
+        raise SystemExit
     protocol = load_protocol()
     cohort = generate_cohort(
         patients_per_scenario=10,

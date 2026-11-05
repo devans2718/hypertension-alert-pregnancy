@@ -49,6 +49,8 @@ src/htn_alert/        core logic
   episodes.py         per-patient episode logic: readings and actions in, events out
   generator.py        synthetic patients, readings and staff actions
   simulation_config.py loads synthetic generator and workflow assumptions
+  coupled_workflow.py actual measurement tasks and staff actions through EpisodeTracker
+  simulation_demo.py  console views of the coupled synthetic simulation
   evaluate.py         metrics over event streams
 app/                  the demo app (planned)
 tests/                pytest tests

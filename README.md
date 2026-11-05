@@ -28,9 +28,12 @@ New to the project? Work through the [onboarding checklist](docs/onboarding.md).
 
 ## Status
 
-Scaffold: the shared data contract (`src/htn_alert/contract.py`), the protocol
-values (`config/protocol.toml`), and the severe-range check are in place. The
-episode logic, generator, evaluation, and app are next.
+The shared protocol, severe-range check and `EpisodeTracker` are implemented.
+The synthetic simulator now couples underlying BP, actual reassessment tasks
+and staff actions, with event-based evaluation. Run `uv run python -m htn_alert.evaluate`
+or see [simulation assumptions and examples](docs/simulation.md). Results depend
+on assumed workflows and do not establish clinical effectiveness. The application
+is developed separately.
 
 ## Using a coding agent
 

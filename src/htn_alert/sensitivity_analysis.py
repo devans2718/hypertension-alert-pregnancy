@@ -1,6 +1,9 @@
 
 """Sensitivity analysis for OB-Response synthetic workflows.
 
+Default demos and course cohorts use the coupled event model. The older list
+cohort path below remains available for projection regression comparisons.
+
 Compares hypothetical prompt effectiveness across the same cohort.
 
 Only cases supported by the current paired simulator contribute
@@ -14,11 +17,53 @@ from datetime import datetime
 
 from htn_alert.cohort_evaluation import evaluate_cohort
 from htn_alert.contract import Reading
-from htn_alert.generator import generate_cohort
+from htn_alert.generator import PatientCourse, generate_cohort
 from htn_alert.protocol import Protocol, load_protocol
 
 
 DEFAULT_EFFECTS = (0.0, 0.25, 0.50, 0.75, 1.0)
+
+
+@dataclass(frozen=True)
+class CoupledSensitivityRow:
+    prompt_effect: float
+    total_patients: int
+    comparable_dose_pairs: int
+    average_reassessment_saved: float | None
+    average_medication_saved: float | None
+    baseline_patient_rate: float | None
+    tool_patient_rate: float | None
+    baseline_persistent_patients: int
+    tool_persistent_patients: int
+    classification_differences: int
+    baseline_no_dose: int
+    tool_no_dose: int
+    baseline_missed_reassessments: int
+    tool_missed_reassessments: int
+
+
+def run_coupled_sensitivity_analysis(
+    cohort: dict[str, PatientCourse], effects: tuple[float, ...] = DEFAULT_EFFECTS,
+    seed: int = 42, *, protocol: Protocol | None = None, workflow_config=None,
+    coupled_config=None,
+) -> tuple[CoupledSensitivityRow, ...]:
+    """Vary assumed effects without selecting on observed persistence or dose."""
+    from htn_alert.cohort_evaluation import evaluate_coupled_cohort
+    protocol = protocol if protocol is not None else load_protocol()
+    rows = []
+    for effect in effects:
+        result = evaluate_coupled_cohort(cohort, effect, seed, protocol=protocol,
+            workflow_config=workflow_config, coupled_config=coupled_config)
+        rows.append(CoupledSensitivityRow(effect, result.total_patients,
+            result.comparable_dose_pairs, result.average_reassessment_minutes_saved,
+            result.average_medication_minutes_saved, result.baseline_events.patient_rate,
+            result.tool_events.patient_rate, result.baseline_events.persistent_patients,
+            result.tool_events.persistent_patients, result.discordant_classifications,
+            sum(p.baseline.medication_time is None for p in result.patients),
+            sum(p.tool.medication_time is None for p in result.patients),
+            sum(p.baseline.missed_reassessments for p in result.patients),
+            sum(p.tool.missed_reassessments for p in result.patients)))
+    return tuple(rows)
 
 
 @dataclass(frozen=True)
@@ -37,14 +82,16 @@ class SensitivityRow:
 
 
 def run_sensitivity_analysis(
-    cohort: dict[str, list[Reading]],
+    cohort: dict[str, list[Reading]] | dict[str, PatientCourse],
     effects: tuple[float, ...] = DEFAULT_EFFECTS,
     seed: int = 42,
     *,
     protocol: Protocol | None = None,
-) -> tuple[SensitivityRow, ...]:
+) -> tuple[SensitivityRow, ...] | tuple[CoupledSensitivityRow, ...]:
     """Evaluate the same synthetic patients at each assumed effect."""
 
+    if cohort and all(isinstance(v, PatientCourse) for v in cohort.values()):
+        return run_coupled_sensitivity_analysis(cohort, effects, seed, protocol=protocol)
     protocol = protocol if protocol is not None else load_protocol()
     rows = []
 
@@ -101,6 +148,11 @@ def fmt(value: float | None) -> str:
 
 
 if __name__ == "__main__":
+    import sys
+    if "--legacy" not in sys.argv:
+        from htn_alert.simulation_demo import demo
+        demo("sensitivity_analysis")
+        raise SystemExit
     protocol = load_protocol()
     cohort = generate_cohort(
         patients_per_scenario=10,
