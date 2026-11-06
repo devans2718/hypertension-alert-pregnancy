@@ -30,6 +30,7 @@ protocol = load_protocol()
 SEVERE_SYS = protocol.severe_systolic    # 160 mmHg
 SEVERE_DIA = protocol.severe_diastolic   # 110 mmHg
 DEMO_COUNTDOWN_SECONDS = 10.0            # 15 minutes treated as 10 seconds for demo
+DEMO_NOTICE_SECONDS = 10.0               # Notice auto-checks at 10s (bedside notification delivered)
 
 
 # Session State Initialization
@@ -133,22 +134,52 @@ div[data-testid="stCheckbox"] {
 # =============================================================================
 # CORE BUSINESS LOGIC & EVENT HANDLERS (Defined before widget instantiation)
 # =============================================================================
+def clear_all_selections():
+    """Clear active edit selection and reset all row select checkbox states."""
+    st.session_state.selected_record_id = None
+    if "records" in st.session_state:
+        for r in st.session_state.records:
+            k = f"sel_{r['episode_id']}"
+            if k in st.session_state:
+                st.session_state[k] = False
+
+
 def log_reading(r_val: str, p_val: str, sys_val: int, dia_val: int, is_edit: bool = False):
+    """Log or update a blood pressure measurement for a specific patient.
+    
+    Guarantees strict per-patient separation and eliminates duplicates:
+    - If the patient already exists in the flowsheet, their vitals are updated in place.
+    - If the patient is new, a separate record is created with Notice and Update starting unchecked.
+    """
     is_sev = (sys_val >= SEVERE_SYS) or (dia_val >= SEVERE_DIA)
     now_time = datetime.now()
     recheck_time_str = (now_time + timedelta(minutes=15)).strftime("%H:%M:%S")
     patient_key = f"{r_val} / {p_val}"
     current_ts = time.time()
 
-    # Check if an active 10s countdown is currently running for this patient
-    existing_episode = st.session_state.active_episodes.get(patient_key)
-    is_during_countdown = False
-    if existing_episode and existing_episode.get("state") == "REPEAT_PENDING":
-        elapsed = current_ts - existing_episode.get("onset_ts", 0)
-        if elapsed < DEMO_COUNTDOWN_SECONDS:
-            is_during_countdown = True
+    # Locate existing patient record to prevent duplicate rows
+    existing_record = None
+    for r in st.session_state.records:
+        if r["patient_key"] == patient_key:
+            existing_record = r
+            break
 
-    if not is_edit:
+    existing_episode = st.session_state.active_episodes.get(patient_key)
+
+    if existing_record is not None:
+        # Existing patient -> Update vitals in place and mark Update checked
+        existing_record["room"] = r_val
+        existing_record["patient_id"] = p_val
+        existing_record["systolic"] = int(sys_val)
+        existing_record["diastolic"] = int(dia_val)
+        existing_record["time_str"] = now_time.strftime("%H:%M:%S")
+        existing_record["recheck_str"] = recheck_time_str
+        existing_record["timestamp"] = current_ts
+        existing_record["is_severe"] = is_sev
+        existing_record["is_updated"] = True  # Follow-up reading / nurse update recorded
+        target_rec = existing_record
+    else:
+        # New separate patient -> Add fresh record with its own timestamp and unchecked boxes
         new_entry = {
             "room": r_val,
             "patient_id": p_val,
@@ -161,78 +192,65 @@ def log_reading(r_val: str, p_val: str, sys_val: int, dia_val: int, is_edit: boo
             "is_severe": is_sev,
             "countdown_start": current_ts if is_sev else None,
             "episode_id": int(time.time() * 1000) + len(st.session_state.records),
-            "is_noticed": is_sev,
-            "is_updated": False,
+            "is_noticed": False,  # Starts unchecked; auto-checks at 10s based on this record's timer
+            "is_updated": False,  # Starts unchecked; checks when updated by nurse
         }
         st.session_state.records.append(new_entry)
+        target_rec = new_entry
 
-    # Alert Logic
+    # Patient Episode State Machine
     if is_sev:
-        if is_during_countdown:
-            # Second severe reading arrived while countdown was running!
+        if existing_episode and existing_episode.get("state") in ("REPEAT_PENDING", "REPEAT_OVERDUE"):
+            # Second severe reading recorded -> Persistent Severe Hypertension confirmed!
             st.session_state.active_episodes[patient_key] = {
                 "state": "CONFIRMED_SEVERE",
                 "onset_ts": existing_episode.get("onset_ts", current_ts),
                 "confirmed_ts": current_ts,
-                "first_bp": existing_episode.get("first_bp", "168/112"),
+                "first_bp": existing_episode.get("first_bp", f"{sys_val}/{dia_val}"),
                 "repeat_bp": f"{sys_val}/{dia_val}",
                 "med_given": False,
+                "confirmed_time_str": now_time.strftime("%H:%M:%S"),
             }
-            st.session_state.active_alert = {
-                "level": "CONFIRMED",
-                "patient_key": patient_key,
-                "title": f"PERSISTENT SEVERE HYPERTENSION CONFIRMED: {patient_key}",
-                "detail": (
-                    f"Repeat severe reading {sys_val}/{dia_val} mmHg recorded within repeat confirmation window! "
-                    f"First-line IV labetalol / IV hydralazine / oral nifedipine required within 60 minutes of onset."
-                ),
-                "timestamp": now_time.strftime("%H:%M:%S"),
-            }
-            for r in st.session_state.records:
-                if r["patient_key"] == patient_key:
-                    r["is_noticed"] = True
-                    r["is_updated"] = True
+            target_rec["is_noticed"] = True
+            target_rec["is_updated"] = True
+        elif existing_episode and existing_episode.get("state") == "CONFIRMED_SEVERE":
+            # Subsequent reading during active confirmed episode
+            existing_episode["repeat_bp"] = f"{sys_val}/{dia_val}"
+            target_rec["is_noticed"] = True
+            target_rec["is_updated"] = True
         else:
-            # First severe reading -> Starts 10-second fast countdown!
+            # First severe reading -> Starts 15-minute repeat window (10s in fast demo)
             st.session_state.active_episodes[patient_key] = {
                 "state": "REPEAT_PENDING",
                 "onset_ts": current_ts,
                 "first_bp": f"{sys_val}/{dia_val}",
                 "med_given": False,
+                "onset_time_str": now_time.strftime("%H:%M:%S"),
             }
-            st.session_state.active_alert = {
-                "level": "SEVERE_FIRST",
-                "patient_key": patient_key,
-                "title": f"CRITICAL SEVERE ALERT: {patient_key}",
-                "detail": (
-                    f"Severe blood pressure {sys_val}/{dia_val} mmHg detected (≥160/110 threshold). "
-                    f"15-Minute repeat measurement confirmation active (Demo speed: 10s countdown running)."
-                ),
-                "timestamp": now_time.strftime("%H:%M:%S"),
-            }
-            for r in st.session_state.records:
-                if r["patient_key"] == patient_key:
-                    r["is_noticed"] = True
+            target_rec["countdown_start"] = current_ts
     else:
         # Non-severe reading
-        if existing_episode and existing_episode.get("state") == "REPEAT_PENDING":
+        if existing_episode and existing_episode.get("state") in ("REPEAT_PENDING", "REPEAT_OVERDUE"):
             # Follow-up resolved
-            st.session_state.active_episodes[patient_key] = {"state": "RESOLVED"}
-            st.session_state.active_alert = {
-                "level": "RESOLVED",
-                "patient_key": patient_key,
-                "title": f"EPISODE RESOLVED: {patient_key}",
-                "detail": f"Follow-up reading {sys_val}/{dia_val} mmHg returned to non-severe reference range.",
-                "timestamp": now_time.strftime("%H:%M:%S"),
+            st.session_state.active_episodes[patient_key] = {
+                "state": "RESOLVED",
+                "resolved_ts": current_ts,
+                "first_bp": existing_episode.get("first_bp", "168/112"),
+                "repeat_bp": f"{sys_val}/{dia_val}",
+                "resolved_time_str": now_time.strftime("%H:%M:%S"),
             }
-            for r in st.session_state.records:
-                if r["patient_key"] == patient_key:
-                    r["is_updated"] = True
+            target_rec["is_updated"] = True
+        elif existing_episode and existing_episode.get("state") == "CONFIRMED_SEVERE":
+            pass
         else:
-            st.session_state.active_alert = None
+            # Normal routine monitoring for this patient
+            if patient_key in st.session_state.active_episodes:
+                del st.session_state.active_episodes[patient_key]
 
 
 def fill_test_case(r_val: str, p_val: str, s_val: int, d_val: int):
+    """Fill form inputs from Quick Test Case button. Clears active selection."""
+    clear_all_selections()
     st.session_state.room_val = r_val
     st.session_state.bed_val = p_val
     st.session_state.sys_val = s_val
@@ -240,14 +258,18 @@ def fill_test_case(r_val: str, p_val: str, s_val: int, d_val: int):
 
 
 def apply_manual_log():
+    """Handler for 'Log Blood Pressure' button."""
     r = str(st.session_state.room_val).strip() or "Room 302"
     p = str(st.session_state.bed_val).strip() or "Bed-04"
     s = int(st.session_state.sys_val)
     d = int(st.session_state.dia_val)
+    clear_all_selections()
     log_reading(r, p, s, d)
 
 
 def apply_reset():
+    """Reset all records, active episodes, and selections."""
+    clear_all_selections()
     st.session_state.records = []
     st.session_state.active_episodes = {}
     st.session_state.active_alert = None
@@ -300,17 +322,23 @@ col_left, col_right = st.columns([1, 1.4], gap="large")
 with col_left:
     st.markdown("### 📝 Patient & Vital Signs Entry")
 
+    # If a patient record is selected in the flowsheet for editing, show visual context
+    if st.session_state.selected_record_id is not None:
+        target_rec = next((r for r in st.session_state.records if r["episode_id"] == st.session_state.selected_record_id), None)
+        if target_rec:
+            st.info(f"✏️ **Editing Patient:** `{target_rec['room']} / {target_rec['patient_id']}` — Adjust values and click **Save Update**, or click **Cancel**.")
+
     # Room and Bed Inputs
     r_col1, r_col2 = st.columns(2)
     r_col1.text_input(
         "Room / Unit Location:",
         key="room_val",
-        help="Enter the clinical room or unit location (e.g., Room 302, Room 101, Triage-A).",
+        help="Enter the clinical room or unit location (e.g., Room 302, Room 301, Triage-A).",
     )
     r_col2.text_input(
         "Patient Identifier / Bed Number:",
         key="bed_val",
-        help="Enter the patient name or bed identifier (e.g., Bed-04, Patient Smith, Bed-01).",
+        help="Enter the patient name or bed identifier (e.g., Bed-04, Bed-05, Bed-01).",
     )
 
     # Blood Pressure Inputs
@@ -355,11 +383,10 @@ with col_left:
     )
 
     st.markdown("---")
-    # Action Buttons
-    btn_col1, btn_col2 = st.columns([2, 1])
-
+    # Action Buttons: Edit Mode vs Standard Logging Mode
     if st.session_state.selected_record_id is not None:
-        if btn_col1.button("💾 Save Update", type="primary", use_container_width=True):
+        btn_c1, btn_c2, btn_c3 = st.columns([1.5, 1.4, 1])
+        if btn_c1.button("💾 Save Update", type="primary", use_container_width=True):
             target_id = st.session_state.selected_record_id
             for r in st.session_state.records:
                 if r["episode_id"] == target_id:
@@ -368,21 +395,50 @@ with col_left:
                     r["patient_key"] = f"{r['room']} / {r['patient_id']}"
                     r["systolic"] = int(st.session_state.sys_val)
                     r["diastolic"] = int(st.session_state.dia_val)
-                    r["is_severe"] = (r["systolic"] >= SEVERE_SYS) or (r["diastolic"] >= SEVERE_DIA)
+                    is_sev = (r["systolic"] >= SEVERE_SYS) or (r["diastolic"] >= SEVERE_DIA)
+                    r["is_severe"] = is_sev
                     r["time_str"] = datetime.now().strftime("%H:%M:%S")
                     r["recheck_str"] = (datetime.now() + timedelta(minutes=15)).strftime("%H:%M:%S")
+                    r["timestamp"] = time.time()
                     r["is_updated"] = True
-                    if r["is_severe"]:
-                        r["is_noticed"] = True
-                    log_reading(r["room"], r["patient_id"], r["systolic"], r["diastolic"], is_edit=True)
+
+                    # Update episode state if severe
+                    ep = st.session_state.active_episodes.get(r["patient_key"])
+                    if is_sev:
+                        if ep and ep.get("state") in ("REPEAT_PENDING", "REPEAT_OVERDUE"):
+                            ep["state"] = "CONFIRMED_SEVERE"
+                            ep["repeat_bp"] = f"{r['systolic']}/{r['diastolic']}"
+                            r["is_noticed"] = True
+                        else:
+                            st.session_state.active_episodes[r["patient_key"]] = {
+                                "state": "REPEAT_PENDING",
+                                "onset_ts": time.time(),
+                                "first_bp": f"{r['systolic']}/{r['diastolic']}",
+                                "med_given": False,
+                                "onset_time_str": datetime.now().strftime("%H:%M:%S"),
+                            }
+                    else:
+                        if ep and ep.get("state") in ("REPEAT_PENDING", "REPEAT_OVERDUE"):
+                            ep["state"] = "RESOLVED"
+                            ep["resolved_ts"] = time.time()
+                            ep["repeat_bp"] = f"{r['systolic']}/{r['diastolic']}"
+                            ep["resolved_time_str"] = datetime.now().strftime("%H:%M:%S")
+                        elif r["patient_key"] in st.session_state.active_episodes:
+                            del st.session_state.active_episodes[r["patient_key"]]
                     break
-            st.session_state.selected_record_id = None
+            clear_all_selections()
             st.rerun()
 
-        if btn_col2.button("✖ Cancel", use_container_width=True):
-            st.session_state.selected_record_id = None
+        if btn_c2.button("➕ Add as New", use_container_width=True, help="Log entered room/bed as a new separate patient"):
+            clear_all_selections()
+            apply_manual_log()
+            st.rerun()
+
+        if btn_c3.button("✖ Cancel", use_container_width=True):
+            clear_all_selections()
             st.rerun()
     else:
+        btn_col1, btn_col2 = st.columns([2, 1])
         btn_col1.button(
             "➕ Log Blood Pressure",
             type="primary",
@@ -401,23 +457,53 @@ with col_left:
 # -----------------------------------------------------------------------------
 with col_right:
 
-    # Using st.fragment with run_every="1s" allows live second-by-second countdown bar updates!
+    # st.fragment with run_every="1s" provides live second-by-second countdown and alert refresh
     @st.fragment(run_every="1s")
     def render_alert_and_table():
         current_time_sec = time.time()
 
-        # Check if any active countdown has expired (elapsed >= 10s)
+        # Check automated protocol tracking (Notice auto-checks at 10s) per individual record
+        for r in st.session_state.records:
+            elapsed = current_time_sec - r["timestamp"]
+            if elapsed >= DEMO_NOTICE_SECONDS:
+                r["is_noticed"] = True
+
+        # Check severe countdowns across active episodes for each individual patient
         for pkey, ep in list(st.session_state.active_episodes.items()):
             if ep.get("state") == "REPEAT_PENDING":
                 elapsed = current_time_sec - ep.get("onset_ts", 0)
                 if elapsed >= DEMO_COUNTDOWN_SECONDS:
                     ep["state"] = "REPEAT_OVERDUE"
-                    # Auto-mark notice as delivered for all records of this patient
                     for r in st.session_state.records:
                         if r["patient_key"] == pkey:
                             r["is_noticed"] = True
-                    # Trigger Overdue alert
-                    st.session_state.active_alert = {
+
+        # ---------------------------------------------------------------------
+        # 1. TOP-RIGHT ALERT SPACE: Evaluates Highest Priority Clinical Alert
+        # ---------------------------------------------------------------------
+        alert_info = None
+
+        # Priority 1: Persistent Severe Hypertension Confirmed
+        for pkey, ep in st.session_state.active_episodes.items():
+            if ep.get("state") == "CONFIRMED_SEVERE":
+                alert_info = {
+                    "level": "CONFIRMED",
+                    "patient_key": pkey,
+                    "title": f"PERSISTENT SEVERE HYPERTENSION CONFIRMED: {pkey}",
+                    "detail": (
+                        f"Repeat severe reading {ep.get('repeat_bp', '')} mmHg recorded within repeat confirmation window! "
+                        f"First-line IV labetalol / IV hydralazine / oral nifedipine required within 60 minutes of onset."
+                    ),
+                    "timestamp": ep.get("confirmed_time_str", datetime.now().strftime("%H:%M:%S")),
+                    "ep_ref": ep,
+                }
+                break
+
+        # Priority 2: Repeat Blood Pressure Overdue
+        if not alert_info:
+            for pkey, ep in st.session_state.active_episodes.items():
+                if ep.get("state") == "REPEAT_OVERDUE":
+                    alert_info = {
                         "level": "OVERDUE",
                         "patient_key": pkey,
                         "title": f"REPEAT BLOOD PRESSURE DUE / OVERDUE: {pkey}",
@@ -426,16 +512,47 @@ with col_right:
                             f"Persistent severe hypertension assumed per SMFM missing recheck protocol rule."
                         ),
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        "ep_ref": ep,
                     }
+                    break
 
-        # ---------------------------------------------------------------------
-        # 1. TOP-RIGHT ALERT SPACE (Directly on top of the record table)
-        # ---------------------------------------------------------------------
-        alert_info = st.session_state.active_alert
+        # Priority 3: Severe Onset / Repeat Pending (Countdown running)
+        if not alert_info:
+            for pkey, ep in st.session_state.active_episodes.items():
+                if ep.get("state") == "REPEAT_PENDING":
+                    rem_sec = max(0.0, DEMO_COUNTDOWN_SECONDS - (current_time_sec - ep.get("onset_ts", 0)))
+                    alert_info = {
+                        "level": "SEVERE_FIRST",
+                        "patient_key": pkey,
+                        "title": f"CRITICAL SEVERE ALERT: {pkey}",
+                        "detail": (
+                            f"Severe blood pressure {ep.get('first_bp', '')} mmHg detected (≥160/110 threshold). "
+                            f"15-Minute repeat measurement confirmation active ({rem_sec:.1f}s remaining in demo mode)."
+                        ),
+                        "timestamp": ep.get("onset_time_str", datetime.now().strftime("%H:%M:%S")),
+                        "ep_ref": ep,
+                    }
+                    break
 
+        # Priority 4: Recently Resolved Episode
+        if not alert_info:
+            for pkey, ep in st.session_state.active_episodes.items():
+                if ep.get("state") == "RESOLVED":
+                    if (current_time_sec - ep.get("resolved_ts", 0)) < 15.0:
+                        alert_info = {
+                            "level": "RESOLVED",
+                            "patient_key": pkey,
+                            "title": f"EPISODE RESOLVED: {pkey}",
+                            "detail": f"Follow-up reading {ep.get('repeat_bp', '')} mmHg returned to non-severe reference range.",
+                            "timestamp": ep.get("resolved_time_str", datetime.now().strftime("%H:%M:%S")),
+                            "ep_ref": ep,
+                        }
+                        break
+
+        # Render Alert Banner
         if alert_info and alert_info["level"] == "CONFIRMED":
-            pkey = alert_info.get("patient_key", "Room 302 / Bed-04")
-            ep = st.session_state.active_episodes.get(pkey, {})
+            pkey = alert_info["patient_key"]
+            ep = alert_info["ep_ref"]
             st.html(f"""<div class="alert-box-severe">
                 <div style="font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px;">
                     <span>🚨</span>
@@ -550,16 +667,19 @@ Documentation Status: Draft entry prepared for nurse review and verification. Ze
                 elif ep_state == "REPEAT_OVERDUE":
                     status_html = '<span class="badge-severe">🟠 Overdue</span>'
                 else:
-                    status_html = '<span class="badge-normal">🟢 Resolved</span>'
+                    status_html = '<span class="badge-severe">🟡 Severe</span>'
             else:
                 recheck_display = f'<strong style="font-size: 13px;">{recheck_val}</strong>'
-                status_html = '<span class="badge-normal">🟢 Normal</span>'
+                if ep_state == "RESOLVED":
+                    status_html = '<span class="badge-normal">🟢 Resolved</span>'
+                else:
+                    status_html = '<span class="badge-normal">🟢 Normal</span>'
 
             c_sel, c_room, c_bed, c_bp, c_log, c_rc, c_stat, c_not, c_upd, c_del = st.columns(
                 [0.6, 1.1, 1.1, 1.4, 1.0, 1.0, 1.3, 0.8, 0.8, 0.7]
             )
 
-            # 1. Select Checkbox (Before Room to select row for editing)
+            # 1. Select Checkbox (Selects record for updating in the left form)
             is_cur_selected = (st.session_state.selected_record_id == rec_id)
             if c_sel.checkbox("Select", value=is_cur_selected, key=f"sel_{rec_id}", label_visibility="collapsed"):
                 if not is_cur_selected:
@@ -592,22 +712,20 @@ Documentation Status: Draft entry prepared for nurse review and verification. Ze
             # 7. Status Badge
             c_stat.markdown(f"<div style='padding-top:2px;'>{status_html}</div>", unsafe_allow_html=True)
 
-            # 8. Notice (Automatic tracking indicator)
-            elapsed_sec = current_time_sec - rec["timestamp"]
-            is_noticed = rec.get("is_noticed", False) or rec["is_severe"] or (elapsed_sec >= DEMO_COUNTDOWN_SECONDS)
+            # 8. Notice: Auto-checks after 10s based on this specific record's timestamp
+            is_noticed = rec.get("is_noticed", False)
             if is_noticed:
-                rec["is_noticed"] = True
-                notice_html = '<div style="display:flex; justify-content:center; padding-top:4px;"><input type="checkbox" checked disabled style="width: 17px; height: 17px; accent-color: #16a34a; cursor: default;"></div>'
+                notice_html = f'<div style="display:flex; justify-content:center; padding-top:4px;"><input type="checkbox" id="not_{rec_id}" checked disabled style="width: 17px; height: 17px; accent-color: #16a34a; cursor: default;"></div>'
             else:
-                notice_html = '<div style="display:flex; justify-content:center; padding-top:4px;"><input type="checkbox" disabled style="width: 17px; height: 17px; cursor: default;"></div>'
+                notice_html = f'<div style="display:flex; justify-content:center; padding-top:4px;"><input type="checkbox" id="not_{rec_id}" disabled style="width: 17px; height: 17px; cursor: default;"></div>'
             c_not.markdown(notice_html, unsafe_allow_html=True)
 
-            # 9. Update (Automatic tracking indicator)
+            # 9. Update: Checked ONLY when the record is actually updated by the nurse
             is_updated = rec.get("is_updated", False)
             if is_updated:
-                update_html = '<div style="display:flex; justify-content:center; padding-top:4px;"><input type="checkbox" checked disabled style="width: 17px; height: 17px; accent-color: #2563eb; cursor: default;"></div>'
+                update_html = f'<div style="display:flex; justify-content:center; padding-top:4px;"><input type="checkbox" id="upd_{rec_id}" checked disabled style="width: 17px; height: 17px; accent-color: #2563eb; cursor: default;"></div>'
             else:
-                update_html = '<div style="display:flex; justify-content:center; padding-top:4px;"><input type="checkbox" disabled style="width: 17px; height: 17px; cursor: default;"></div>'
+                update_html = f'<div style="display:flex; justify-content:center; padding-top:4px;"><input type="checkbox" id="upd_{rec_id}" disabled style="width: 17px; height: 17px; cursor: default;"></div>'
             c_upd.markdown(update_html, unsafe_allow_html=True)
 
             # 10. Delete Button (Trash bin with confirmation)
@@ -621,9 +739,12 @@ Documentation Status: Draft entry prepared for nurse review and verification. Ze
                 conf_c1.warning(f"⚠️ Confirm delete **{rec['room']} / {rec['patient_id']}** ({rec['systolic']}/{rec['diastolic']} mmHg)?")
                 if conf_c2.button("✔️ Yes, Delete", key=f"conf_yes_{rec_id}", type="primary"):
                     st.session_state.records = [r for r in st.session_state.records if r["episode_id"] != rec_id]
+                    if pkey in st.session_state.active_episodes:
+                        del st.session_state.active_episodes[pkey]
                     st.session_state.confirm_delete_id = None
                     if st.session_state.selected_record_id == rec_id:
                         st.session_state.selected_record_id = None
+                    clear_all_selections()
                     st.rerun()
                 if conf_c3.button("✖ Cancel", key=f"conf_no_{rec_id}"):
                     st.session_state.confirm_delete_id = None
@@ -631,7 +752,7 @@ Documentation Status: Draft entry prepared for nurse review and verification. Ze
 
             st.html("<div style='border-bottom: 1px solid #f1f5f9; margin: 4px 0;'></div>")
 
-        st.caption("💡 *Automatic Protocol Tracking: Notice auto-checks when the bedside alert/15-minute recheck window fires (10s in demo). Update auto-checks when repeat vitals or updates are logged.*")
+        st.caption("💡 *Protocol Tracking: Notice auto-checks at 10s (bedside notification delivered). Update checks when the record is updated by the nurse.*")
 
     # Render the alert and table fragment
     render_alert_and_table()
