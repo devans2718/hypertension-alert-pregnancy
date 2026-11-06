@@ -73,14 +73,16 @@ def draft_emr_entry(
             lines.append(f"- {t_str}: Initial severe blood pressure recorded. {e.detail} Episode opened.")
         elif e.kind == EventKind.REPEAT_DUE:
             lines.append(f"- {t_str}: Scheduled repeat blood pressure due. {e.detail}")
-        elif e.kind == EventKind.REPEAT_OVERDUE:
-            lines.append(f"- {t_str}: Repeat blood pressure overdue. {e.detail}")
         elif e.kind == EventKind.CONFIRMED:
             lines.append(f"- {t_str}: Confirmed persistent severe blood pressure. {e.detail} Provider notified.")
+        elif e.kind == EventKind.DOSE_RECORDED:
+            lines.append(f"- {t_str}: Antihypertensive medication dose recorded. {e.detail}")
         elif e.kind == EventKind.ESCALATED:
             lines.append(f"- {t_str}: Escalation notice triggered. {e.detail}")
         elif e.kind == EventKind.EPISODE_CLOSED:
             lines.append(f"- {t_str}: Episode closed. {e.detail}")
+        elif e.kind == EventKind.EPISODE_REOPENED:
+            lines.append(f"- {t_str}: Episode reopened. {e.detail}")
         else:
             lines.append(f"- {t_str}: {e.detail}")
 

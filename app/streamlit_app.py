@@ -211,12 +211,9 @@ if app_mode == "👩‍⚕️ Nurse Bedside Entry & Countdown":
                 st.warning("🟠 **REPEAT BP DUE NOW** — 15 minutes reached since severe reading. Recheck vital signs.")
                 st.write(status.detail)
 
-            elif status.phase == EpisodePhase.REPEAT_OVERDUE:
-                st.error("🔴 **REPEAT BP OVERDUE** — Recheck is required immediately to confirm persistence!")
+            elif status.phase == EpisodePhase.REOPENED:
+                st.warning("🟡 **EPISODE REOPENED** — Severe blood pressure observed again within repeat window.")
                 st.write(status.detail)
-                if status.repeat_target_time:
-                    _, _, display_str = calculate_countdown(status.repeat_target_time, now_clock)
-                    st.metric("Time Overdue", display_str)
 
             elif status.phase == EpisodePhase.CONFIRMED:
                 st.error("🚨 **PERSISTENT SEVERE HYPERTENSION CONFIRMED**")
@@ -404,10 +401,10 @@ elif app_mode == "⏱️ Replay Readings & Scenarios":
                 EpisodePhase.NONE: "🟢 Normal",
                 EpisodePhase.REPEAT_PENDING: "🟡 Repeat Pending",
                 EpisodePhase.REPEAT_DUE: "🟠 Repeat Due",
-                EpisodePhase.REPEAT_OVERDUE: "🔴 Repeat Overdue",
                 EpisodePhase.CONFIRMED: "🚨 Confirmed Severe",
                 EpisodePhase.ESCALATED: "🚨 Escalated",
                 EpisodePhase.RESOLVED: "🟢 Resolved",
+                EpisodePhase.REOPENED: "🟡 Reopened",
             }
             st.info(f"**State:** {phase_colors.get(status.phase, status.phase.value)}")
 
@@ -452,11 +449,8 @@ elif app_mode == "⏱️ Replay Readings & Scenarios":
                 st.metric("Repeat Due In", disp)
         elif focus_status.phase == EpisodePhase.REPEAT_DUE:
             st.warning("🟠 Status: Repeat blood pressure measurement due now!")
-        elif focus_status.phase == EpisodePhase.REPEAT_OVERDUE:
-            st.error("🔴 Status: Repeat blood pressure overdue!")
-            if focus_status.repeat_target_time:
-                _, _, disp = calculate_countdown(focus_status.repeat_target_time, simulated_now)
-                st.metric("Time Overdue", disp)
+        elif focus_status.phase == EpisodePhase.REOPENED:
+            st.warning("🟡 Status: Episode reopened within repeat window.")
         elif focus_status.phase == EpisodePhase.CONFIRMED:
             st.error("🚨 Status: Persistent severe hypertension confirmed.")
             if focus_status.treatment_target_time:

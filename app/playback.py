@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from htn_alert.contract import Action, Event, EventKind, Reading
-from htn_alert.episodes import EpisodeTracker
+from htn_alert.episodes import EpisodeTracker, treatment_deadline
 from htn_alert.protocol import Protocol
 from htn_alert.rules import is_severe
 
@@ -25,10 +25,10 @@ class EpisodePhase(str, Enum):
     NONE = "none"                      # No episode opened / routine baseline
     REPEAT_PENDING = "repeat_pending"  # EPISODE_OPENED: 15-min countdown active
     REPEAT_DUE = "repeat_due"          # REPEAT_DUE: 15-min repeat due now
-    REPEAT_OVERDUE = "repeat_overdue"  # REPEAT_OVERDUE: repeat overdue
     CONFIRMED = "confirmed"            # CONFIRMED: persistent severe hypertension
     ESCALATED = "escalated"            # ESCALATED: unacknowledged escalation
     RESOLVED = "resolved"              # EPISODE_CLOSED: closed below severe range
+    REOPENED = "reopened"              # EPISODE_REOPENED: severe again in window
 
 
 @dataclass(frozen=True)
@@ -152,7 +152,7 @@ def evaluate_playback_episode(
     events += tracker.tick(clock)
 
     latest_r = visible_readings[-1]
-    patient_events = tracker.get_patient_events(patient_id)
+    patient_events = [e for e in events if e.patient_id == patient_id]
     latest_event = patient_events[-1] if patient_events else None
 
     # Determine onset, repeat readings, and target timestamps
@@ -169,7 +169,7 @@ def evaluate_playback_episode(
         onset_time = opened_events[-1].time
         target_time = onset_time + protocol.repeat_min
         deadline_time = onset_time + protocol.repeat_max
-        treatment_target_time = onset_time + protocol.treatment_target
+        treatment_target_time = treatment_deadline(onset_time, protocol)
 
         # Find repeat reading after onset
         repeat_r = next((r for r in visible_readings if r.time > onset_time), None)
@@ -237,24 +237,8 @@ def evaluate_playback_episode(
             detail=(
                 f"Persistent severe HTN confirmed: initial {first_severe.systolic}/{first_severe.diastolic} "
                 f"at {first_severe.time.strftime('%H:%M')}"
-                + (f", repeat {repeat_r.systolic}/{repeat_r.diastolic} at {repeat_r.time.strftime('%H:%M')}." if repeat_r else " (missing repeat).")
+                + (f", repeat {repeat_r.systolic}/{repeat_r.diastolic} at {repeat_r.time.strftime('%H:%M')}." if repeat_r else f" ({confirmed_events[-1].detail}).")
             ),
-        )
-
-    overdue_events = [e for e in patient_events if e.kind == EventKind.REPEAT_OVERDUE]
-    if overdue_events:
-        return EpisodeStatus(
-            phase=EpisodePhase.REPEAT_OVERDUE,
-            patient_id=patient_id,
-            latest_reading=latest_r,
-            first_severe_reading=first_severe,
-            repeat_reading=repeat_r,
-            repeat_target_time=target_time,
-            repeat_deadline_time=deadline_time,
-            treatment_target_time=treatment_target_time,
-            events=patient_events,
-            latest_event=latest_event,
-            detail="Repeat blood pressure measurement overdue. Immediate recheck required.",
         )
 
     due_events = [e for e in patient_events if e.kind == EventKind.REPEAT_DUE]
