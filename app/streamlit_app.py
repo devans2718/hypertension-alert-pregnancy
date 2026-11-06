@@ -249,10 +249,18 @@ def log_reading(r_val: str, p_val: str, sys_val: int, dia_val: int, is_edit: boo
 
 
 def fill_test_case(r_val: str, p_val: str, s_val: int, d_val: int):
-    """Fill form inputs from Quick Test Case button. Clears active selection."""
-    clear_all_selections()
-    st.session_state.room_val = r_val
-    st.session_state.bed_val = p_val
+    """Fill form inputs from Quick Test Case button.
+    
+    If a patient record is currently selected for editing:
+    - Retains the selected patient's Room and Bed ID!
+    - Updates Systolic and Diastolic with test case values.
+    - Keeps 'Save Update' active so user can immediately save to this patient.
+    If no record is selected:
+    - Fills default Room, Bed ID, Systolic, and Diastolic.
+    """
+    if st.session_state.selected_record_id is None:
+        st.session_state.room_val = r_val
+        st.session_state.bed_val = p_val
     st.session_state.sys_val = s_val
     st.session_state.dia_val = d_val
 
