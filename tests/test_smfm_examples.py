@@ -9,8 +9,6 @@ non-severe one, times in minutes from the first severe reading. Several
 examples have readings less than 15 minutes apart, which the L&D monitors we
 expect data from don't produce. They stay as the figure gives them, because
 they test the definition, not the data.
-
-Expected to fail until EpisodeTracker is implemented (see #9).
 """
 
 from dataclasses import dataclass
@@ -127,8 +125,9 @@ def run(sequence: str, until: int | None = None) -> list[Episode]:
             id="F",
         ),
         pytest.param(
-            # Confirmed only at 70 minutes, which is why the treatment clock
-            # starts at onset.
+            # No recheck until 70 minutes. The figure's point: confirmation can
+            # come late, which is why the treatment clock starts at onset. Live,
+            # the missing recheck confirms just after 15, from tick().
             "S 0, S 70, N 80", None,
             Episode(onset=0, persistent=True, ends=80),
             id="G",

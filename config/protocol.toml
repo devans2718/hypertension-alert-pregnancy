@@ -22,9 +22,12 @@ diastolic = 110
 [repeat]
 # An episode ends at the first reading below the severe range. It's persistent
 # if either condition below holds.
+# Times compare in whole minutes, so 15:40 after onset counts as 15, and 16:00 as 16.
+# Assume: seconds don't matter; no tolerance beyond this one minute.
 # Persistent if not documented below severe within this long of onset, so a
 # missing recheck counts as persistent.
-# Lit: SMFM, Table 1. Assume: 15 itself counts as within. Pitch: to confirm.
+# Lit: SMFM, Table 1. Pitch: meeting of 2026-10-22: readings come 15, 30 or 60 minutes
+# apart, and a severe reading followed by a normal one at 15 minutes is not persistent.
 min_minutes = 15
 # Persistent if severe again from min_minutes through this long after onset, even
 # with non-severe readings in between. Such a reading folds back into the episode.
@@ -41,5 +44,10 @@ target_minutes = 60
 
 [escalation]
 # Escalate when the provider hasn't acknowledged within this long of notification.
+# Notification is the CONFIRMED event. Exactly this long, in whole minutes, doesn't
+# escalate.
 # Assume: no source yet.
+# Placeholder, for the team to decide: a late confirmation gets the same timeout.
+# Severe at 0, non-severe at 15 and severe at 50 confirms at 50 and escalates just
+# after 60, when the treatment window has closed. See _should_escalate in episodes.py.
 unacknowledged_minutes = 10
