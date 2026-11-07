@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>L&D Severe Hypertension Alert System - Project Poster</title>
+  <style>
+    /* -------------------------------------------------------------
+       48 x 36 Inches Landscape Print & Screen Scientific Poster
+       Hack-A-Roo 2026 Pitch-to-Build Track - Research Prototype
+       ------------------------------------------------------------- */
+    @page {
+      size: 48in 36in;
+      margin: 0;
+    }
+
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --slate-900: #0f172a;
+      --slate-800: #1e293b;
+      --slate-700: #334155;
+      --slate-600: #475569;
+      --slate-500: #64748b;
+      --slate-200: #e2e8f0;
+      --slate-100: #f1f5f9;
+      --teal-700: #0f766e;
+      --teal-600: #0d9488;
+      --teal-500: #14b8a6;
+      --teal-100: #ccfbf1;
+      --teal-50: #f0fdfa;
+      --red-600: #dc2626;
+      --red-500: #ef4444;
+      --red-100: #fee2e2;
+      --red-50: #fef2f2;
+      --amber-600: #d97706;
+      --amber-500: #f59e0b;
+      --amber-100: #fef3c7;
+      --blue-600: #2563eb;
+      --blue-50: #eff6ff;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #cbd5e1;
+      color: var(--slate-900);
+      line-height: 1.4;
+      display: flex;
+      justify-content: center;
+      padding: 15px;
+    }
+
+    /* Print & Full Dimension Canvas */
+    .poster-canvas {
+      width: 100%;
+      max-width: 1750px;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      border-radius: 12px;
+      overflow: visible;
+    }
+
+    @media screen and (max-width: 48in) {
+      body {
+        padding: 10px;
+        background: #cbd5e1;
+      }
+
+      .poster-canvas {
+        width: 100%;
+        max-width: 1750px;
+        height: auto;
+        min-height: 0;
+        border-radius: 12px;
+        overflow: visible;
+      }
+    }
+
+    @media print {
+      @page {
+        size: 48in 36in;
+        margin: 0;
+      }
+
+      html,
+      body {
+        width: 48in !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: transparent !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .poster-canvas {
+        width: 48in !important;
+        height: auto !important;
+        min-height: 36in !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        overflow: visible !important;
+      }
+
+      .no-print {
+        display: none !important;
+      }
+    }
+
+    /* Top Action Bar for screen viewing */
+    .no-print {
+      position: fixed;
+      top: 15px;
+      right: 15px;
+      z-index: 9999;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      padding: 10px 18px;
+      border-radius: 30px;
+      color: white;
+      font-size: 14px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    }
+
+    .no-print button {
+      background: var(--teal-600);
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .no-print button:hover {
+      background: var(--teal-500);
+    }
+
+    /* -------------------------------------------------------------
+       Header Section
+       ------------------------------------------------------------- */
+    header {
+      background: linear-gradient(135deg, #091e3a 0%, #0f3d4c 50%, #0b5351 100%);
+      color: white;
+      padding: 22px 45px 18px;
+      border-bottom: 5px solid var(--teal-500);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header-text {
+      flex: 1;
+    }
+
+    .badge-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .badge {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge.alert {
+      background: var(--red-600);
+      border-color: var(--red-500);
+    }
+
+    h1 {
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 18px;
+      color: #99f6e4;
+      font-weight: 400;
+      margin-bottom: 8px;
+    }
+
+    .author-line {
+      font-size: 16px;
+      color: #e2e8f0;
+      font-weight: 500;
+    }
+
+    .author-line strong {
+      color: white;
+      font-weight: 700;
+    }
+
+    .affiliation {
+      font-size: 14px;
+      color: #cbd5e1;
+      margin-top: 2px;
+    }
+
+    .header-logos {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      min-width: 320px;
+    }
+
+    .umkc-badge {
+      font-size: 22px;
+      font-weight: 900;
+      color: #38bdf8;
+      letter-spacing: 1px;
+    }
+
+    .course-badge {
+      text-align: right;
+      font-size: 13px;
+      color: #e2e8f0;
+      line-height: 1.35;
+    }
+
+    /* -------------------------------------------------------------
+       3-Column Grid Layout
+       ------------------------------------------------------------- */
+    .grid-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1.15fr;
+      gap: 16px;
+      padding: 16px 36px;
+      flex: 1;
+    }
+
+    .column {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border-radius: 12px;
+      border: 1px solid var(--slate-200);
+      padding: 14px 18px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--slate-900);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid var(--slate-100);
+    }
+
+    .card-title .icon {
+      font-size: 20px;
+    }
+
+    p,
+    li {
+      font-size: 13.5px;
+      color: var(--slate-700);
+      line-height: 1.4;
+    }
+
+    strong {
+      color: var(--slate-900);
+    }
+
+    ul {
+      padding-left: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    /* Clinical Alert Callout */
+    .alert-box {
+      background: var(--red-50);
+      border-left: 4px solid var(--red-600);
+      padding: 8px 12px;
+      border-radius: 0 6px 6px 0;
+      font-size: 13px;
+    }
+
+    .alert-box strong {
+      color: var(--red-600);
+    }
+
+    .info-box {
+      background: var(--teal-50);
+      border-left: 4px solid var(--teal-600);
+      padding: 8px 12px;
+      border-radius: 0 6px 6px 0;
+      font-size: 13px;
+    }
+
+    .info-box strong {
+      color: var(--teal-700);
+    }
+
+    /* Metric Grids */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .metric-box {
+      background: var(--slate-100);
+      border: 1px solid var(--slate-200);
+      padding: 8px 12px;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .metric-value {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--teal-700);
+      line-height: 1;
+      margin-bottom: 3px;
+    }
+
+    .metric-value.alert {
+      color: var(--red-600);
+    }
+
+    .metric-label {
+      font-size: 11px;
+      color: var(--slate-600);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    th,
+    td {
+      padding: 5px 8px;
+      text-align: left;
+    }
+
+    th {
+      background: var(--slate-100);
+      color: var(--slate-800);
+      font-weight: 700;
+      border-bottom: 2px solid var(--slate-200);
+    }
+
+    td {
+      border-bottom: 1px solid var(--slate-200);
+      color: var(--slate-700);
+    }
+
+    tr:nth-child(even) td {
+      background: #fafaf9;
+    }
+
+    .highlight-row {
+      background: #f0fdf4 !important;
+      font-weight: 600;
+    }
+
+    /* Diagram SVG Canvas */
+    .diagram-container {
+      background: #f8fafc;
+      border: 1px solid var(--slate-200);
+      border-radius: 10px;
+      padding: 10px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    svg text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* -------------------------------------------------------------
+       Footer
+       ------------------------------------------------------------- */
+    footer {
+      background: var(--slate-800);
+      color: #94a3b8;
+      padding: 10px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      border-top: 3px solid var(--slate-700);
+    }
+
+    footer strong {
+      color: #f1f5f9;
+    }
+
+    footer a {
+      color: #38bdf8;
+      text-decoration: none;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Floating Screen Control Bar -->
+  <div class="no-print">
+    <div style="display: flex; flex-direction: column; gap: 2px; text-align: right;">
+      <span style="font-weight: 700;">📐 48″ × 36″ Landscape Scientific Poster</span>
+      <span style="font-size: 12px; color: #cbd5e1;">Print Settings: <strong>Layout: Landscape</strong> &bull;
+        <strong>Margins: None</strong> &bull; <strong>Background graphics: Checked</strong></span>
+    </div>
+    <button onclick="window.print()">🖨️ Print / Save as PDF</button>
+  </div>
+
+  <div class="poster-canvas">
+
+    <!-- HEADER -->
+    <header>
+      <div class="header-text">
+        <div class="badge-bar">
+          <span class="badge alert">Hack-A-Roo 2026 Pitch-to-Build Track</span>
+        </div>
+        <h1>Labor & Delivery Severe Hypertension Alert System</h1>
+        <div class="subtitle">Real-Time Protocol Tracking, Bedside Countdown, and Traceable EMR Synthesis for Maternal
+          Care</div>
+        <div class="author-line">
+          <strong>Vince Nguyen</strong> &bull; <strong>Daniel Evans</strong> (Build Lead) &bull; <strong>Obed Akwasi
+            Aning</strong>
+        </div>
+        <div class="affiliation">
+          Department of Computer Science & Electrical Engineering &bull; University of Missouri–Kansas City (UMKC)
+        </div>
+      </div>
+      <div class="header-logos">
+
+      </div>
+    </header>
+
+    <!-- 3-COLUMN CONTENT GRID -->
+    <div class="grid-container">
+
+      <!-- ========================================================
+           COLUMN 1: CLINICAL MOTIVATION, GUIDELINES & DATA
+           ======================================================== -->
+      <div class="column">
+
+        <!-- 1. Problem Statement -->
+        <div class="card">
+          <div class="card-title"><span class="icon">🚨</span> 1. Problem Statement & Clinical Urgency</div>
+          <div class="alert-box">
+            <strong>Severe Maternal Morbidity:</strong> Severe hypertension in pregnancy accounts for &gt;9% of maternal
+            mortality in the US and is a leading preventable cause of stroke, eclampsia, and ICU admission.
+          </div>
+          <p>
+            <strong>The Bedside Dilemma:</strong> In busy Labor & Delivery units, bedside nurses face high cognitive
+            load, paper flowsheets, and constant alarms. Relying on <em>human memory</em> to track repeat measurement
+            windows frequently leads to delayed reassessments and missed medication deadlines.
+          </p>
+          <ul>
+            <li><strong>Severe Range Blood Pressure:</strong> Systolic &ge; 160 mmHg OR Diastolic &ge; 110 mmHg.</li>
+            <li><strong>The 15–60 Minute Recheck Window:</strong> Guidelines require a timely repeat blood pressure to
+              confirm persistent severe hypertension.</li>
+            <li><strong>The 60-Minute Treatment Target:</strong> Standard antihypertensives (IV labetalol, IV
+              hydralazine, or oral nifedipine) must be administered within <strong>60 minutes of onset</strong>
+              (measured from the <em>first</em> severe reading, not confirmation).</li>
+          </ul>
+        </div>
+
+        <!-- 2. Data Sources & Synthetic Generator -->
+        <div class="card">
+          <div class="card-title"><span class="icon">📊</span> 2. Datasets & Synthetic Stream Modeling</div>
+          <p>
+            Per clinical research safety rules, the system operates strictly on <strong>open benchmark data and
+              reproducible synthetic streams</strong> (Zero real patient PHI):
+          </p>
+
+          <div class="info-box">
+            <strong>Open Maternal Benchmark (UCI Repository):</strong> 1,014 de-identified clinical records across Age,
+            Systolic BP, Diastolic BP, Glucose, Temp, and Heart Rate (Ahmed et al., 2020; DOI: 10.24432/C5DP5D, CC BY
+            4.0).
+          </div>
+
+          <p><strong>8-Scenario Synthetic Patient Generator (<code>generator.py</code>):</strong></p>
+          <ul>
+            <li><strong>Severe Trajectories:</strong> <code>persistent_severe</code>, <code>nonpersistent_severe</code>,
+              <code>recurrent_severe</code>.
+            </li>
+            <li><strong>Workflow Delays:</strong> <code>delayed_or_missing_repeat</code> (explicit failure modes: +16m
+              delay, +30m missing recheck).</li>
+            <li><strong>Control Baselines:</strong> <code>non_hypertensive</code> (&lt;130/&lt;80 mmHg),
+              <code>mild_hypertension</code> (140–159/90–109 mmHg).
+            </li>
+          </ul>
+
+          <div class="metric-grid" style="margin-top: 6px;">
+            <div class="metric-box">
+              <div class="metric-value">1,014</div>
+              <div class="metric-label">UCI Benchmark Records</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-value">8 Scenarios</div>
+              <div class="metric-label">Synthetic Patient Profiles</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Objectives -->
+        <div class="card">
+          <div class="card-title"><span class="icon">🎯</span> Project Objectives</div>
+          <ul>
+            <li><strong>Deterministic FSM:</strong> Eliminate reliance on bedside memory with an SMFM 2022-compliant
+              state machine. Zero black-box AI in the safety loop.</li>
+            <li><strong>Bedside Visual Timelines:</strong> Live 15-minute countdowns and unit multi-bed monitoring for
+              immediate situational awareness.</li>
+            <li><strong>Traceable EMR Synthesis:</strong> Generative AI for nursing documentation with 100% token
+              mathematical verification against system events.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <!-- ========================================================
+           COLUMN 2: ARCHITECTURE & METHODOLOGY
+           ======================================================== -->
+      <div class="column">
+
+        <!-- 3. System Architecture -->
+        <div class="card">
+          <div class="card-title"><span class="icon">🏗️</span> 3. System Architecture & Flow</div>
+          <p>
+            Rigorous architectural decoupling: safety-critical alerting remains 100% deterministic, while generative AI
+            is confined to post-event documentation.
+          </p>
+
+          <div class="diagram-container">
+            <svg viewBox="0 0 520 220" width="100%" height="150">
+              <!-- Generator -->
+              <rect x="10" y="20" width="120" height="70" rx="8" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" />
+              <text x="70" y="48" font-size="13" font-weight="bold" text-anchor="middle" fill="#0369a1">Data
+                Streams</text>
+              <text x="70" y="68" font-size="11" text-anchor="middle" fill="#0c4a6e">Synthetic / UCI</text>
+              <text x="70" y="82" font-size="9" text-anchor="middle" fill="#0284c7">Reading, Action</text>
+
+              <!-- Arrow -->
+              <line x1="130" y1="55" x2="170" y2="55" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)" />
+
+              <!-- Deterministic Tracker -->
+              <rect x="170" y="10" width="160" height="90" rx="8" fill="#ccfbf1" stroke="#0f766e" stroke-width="3" />
+              <text x="250" y="35" font-size="13" font-weight="bold" text-anchor="middle" fill="#0f766e">EpisodeTracker
+                FSM</text>
+              <text x="250" y="55" font-size="11" text-anchor="middle" fill="#134e4a">SMFM 2022 Logic</text>
+              <text x="250" y="73" font-size="10" text-anchor="middle" fill="#115e59">observe() &amp; tick()</text>
+              <text x="250" y="88" font-size="9" font-weight="bold" text-anchor="middle" fill="#0f766e">100%
+                DETERMINISTIC</text>
+
+              <!-- Arrow Split -->
+              <line x1="330" y1="55" x2="370" y2="55" stroke="#64748b" stroke-width="2" />
+              <line x1="370" y1="55" x2="370" y2="155" stroke="#64748b" stroke-width="2" />
+
+              <!-- UI App -->
+              <rect x="380" y="20" width="130" height="70" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2" />
+              <text x="445" y="45" font-size="12" font-weight="bold" text-anchor="middle" fill="#b45309">Bedside Web
+                App</text>
+              <text x="445" y="63" font-size="10" text-anchor="middle" fill="#78350f">Live 15' Countdown</text>
+              <text x="445" y="78" font-size="9" text-anchor="middle" fill="#92400e">Multi-Bed Unit View</text>
+
+              <!-- AI EMR Engine -->
+              <rect x="170" y="125" width="160" height="85" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" />
+              <text x="250" y="148" font-size="12" font-weight="bold" text-anchor="middle" fill="#6d28d9">AI EMR
+                Synthesizer</text>
+              <text x="250" y="165" font-size="10" text-anchor="middle" fill="#5b21b6">No Dx / No Rx Rules</text>
+              <text x="250" y="182" font-size="10" font-weight="bold" text-anchor="middle" fill="#4c1d95">Traceability
+                Verifier</text>
+              <text x="250" y="198" font-size="9" text-anchor="middle" fill="#6d28d9">Nurse Review Sign-Off</text>
+
+              <!-- Arrow to EMR -->
+              <line x1="370" y1="165" x2="330" y2="165" stroke="#64748b" stroke-width="2" />
+
+              <!-- Defs -->
+              <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6"
+                  orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+                </marker>
+              </defs>
+            </svg>
+          </div>
+        </div>
+
+        <!-- 4. Deterministic Episode Tracking -->
+        <div class="card">
+          <div class="card-title"><span class="icon">⏱️</span> 4. SMFM 2022 State Machine Engine</div>
+          <p>
+            Implements all rules from SMFM Figure 1 &amp; Table 1 in <code>episodes.py</code>:
+          </p>
+          <ul>
+            <li><strong><code>EPISODE_OPENED</code>:</strong> Fires immediately on severe reading. The 60-minute
+              medication clock anchors to onset time (T<sub>onset</sub>).</li>
+            <li><strong><code>REPEAT_DUE</code>:</strong> Prompt scheduled for exactly 15 minutes after onset
+              (T<sub>onset</sub> + 15 min).</li>
+            <li><strong><code>CONFIRMED</code>:</strong> Fires upon repeat severe reading in 15–60m window, <em>OR</em>
+              via tick() after 15m if no normal check is documented (missing recheck rule).</li>
+            <li><strong><code>ESCALATED</code>:</strong> Fires if attending provider notification is unacknowledged for
+              &gt;10 min.</li>
+            <li><strong><code>EPISODE_REOPENED</code>:</strong> A severe reading within 60m folds back into the existing
+              episode.</li>
+          </ul>
+        </div>
+
+        <!-- 5. Traceable AI Documentation -->
+        <div class="card">
+          <div class="card-title"><span class="icon">🛡️</span> 5. Traceable EMR AI Documentation</div>
+          <p>
+            Generative AI drafts clinical event timelines, protected by strict mathematical guardrails:
+          </p>
+          <div class="info-box">
+            <strong>The Traceability Rule:</strong> Every timestamp (e.g., 08:15), blood pressure reading (e.g., 168/112
+            mmHg), and bed identifier (e.g., Bed-04) in the draft must map back to an immutable system
+            <code>Event</code>. Invented values are blocked.
+          </div>
+          <ul>
+            <li><strong>Zero Diagnosis:</strong> Prohibited from stating clinical diagnoses (e.g. preeclampsia).</li>
+            <li><strong>Zero Treatment Orders:</strong> Strictly documents administered doses; never recommends
+              treatment.</li>
+            <li><strong>Nurse-in-the-Loop:</strong> Must be reviewed and verified by the bedside nurse before EMR
+              commit.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <!-- ========================================================
+           COLUMN 3: RESULTS, EVALUATION & IMPACT
+           ======================================================== -->
+      <div class="column">
+
+        <!-- 6. Simulation Results -->
+        <div class="card">
+          <div class="card-title"><span class="icon">📈</span> 6. Paired Workflow Simulation Results</div>
+          <p>
+            Monte Carlo paired simulation comparing standard baseline practice vs. alert-assisted care over <strong>80
+              synthetic patients</strong>:
+          </p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Clinical Workflow Milestone</th>
+                <th>Baseline</th>
+                <th>Alert Tool</th>
+                <th>Net Impact</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Nurse Recognition Latency</td>
+                <td>7.00 min</td>
+                <td>2.75 min</td>
+                <td><strong>4.25 min saved</strong></td>
+              </tr>
+              <tr>
+                <td>Reassessment Lateness</td>
+                <td>8.85 min</td>
+                <td>4.50 min</td>
+                <td><strong>4.35 min saved</strong></td>
+              </tr>
+              <tr>
+                <td>Provider Notification Delay</td>
+                <td>12.45 min</td>
+                <td>5.00 min</td>
+                <td><strong>7.45 min saved</strong></td>
+              </tr>
+              <tr>
+                <td>Time to Medication (from onset)</td>
+                <td>73.35 min</td>
+                <td>65.90 min</td>
+                <td><strong>7.45 min saved</strong></td>
+              </tr>
+              <tr class="highlight-row">
+                <td>Treated &le; 60 Min Target</td>
+                <td>5 / 20 (25%)</td>
+                <td>8 / 20 (40%)</td>
+                <td><strong>+60.0% Relative Gain</strong></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="metric-grid" style="margin-top: 10px;">
+            <div class="metric-box">
+              <div class="metric-value">-7.45m</div>
+              <div class="metric-label">Medication Delivery Speedup</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-value">+60.0%</div>
+              <div class="metric-label">Target Adherence Adopter Gain</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 7. Sensitivity Analysis -->
+        <div class="card">
+          <div class="card-title"><span class="icon">🔬</span> 7. Sensitivity Analysis & Verification</div>
+          <p>
+            Varying nurse prompt adoption from 0% to 100% demonstrates robust latency reduction:
+          </p>
+
+          <div class="diagram-container">
+            <svg viewBox="0 0 500 130" width="100%" height="95">
+              <!-- Axes -->
+              <line x1="50" y1="105" x2="480" y2="105" stroke="#94a3b8" stroke-width="1.5" />
+              <line x1="50" y1="15" x2="50" y2="105" stroke="#94a3b8" stroke-width="1.5" />
+              <text x="260" y="124" font-size="11" text-anchor="middle" fill="#64748b">Reminder Adoption Rate (%)</text>
+              <text x="18" y="60" font-size="11" text-anchor="middle" transform="rotate(-90 18 60)" fill="#64748b">Min
+                Saved</text>
+
+              <!-- Ticks -->
+              <text x="60" y="117" font-size="10" fill="#64748b">0%</text>
+              <text x="160" y="117" font-size="10" fill="#64748b">25%</text>
+              <text x="260" y="117" font-size="10" fill="#64748b">50%</text>
+              <text x="360" y="117" font-size="10" fill="#64748b">75%</text>
+              <text x="460" y="117" font-size="10" fill="#64748b">100%</text>
+
+              <!-- Line: Medication Time Saved -->
+              <polyline points="60,105 160,82 260,60 360,37 460,15" fill="none" stroke="#0d9488" stroke-width="3" />
+              <!-- Dots -->
+              <circle cx="60" cy="105" r="4" fill="#0d9488" />
+              <circle cx="160" cy="82" r="4" fill="#0d9488" />
+              <circle cx="260" cy="60" r="4" fill="#0d9488" />
+              <circle cx="360" cy="37" r="4" fill="#0d9488" />
+              <circle cx="460" cy="15" r="4" fill="#0d9488" />
+
+              <!-- Labels -->
+              <text x="160" y="75" font-size="10" font-weight="bold" fill="#0f766e">3.75m</text>
+              <text x="260" y="53" font-size="10" font-weight="bold" fill="#0f766e">7.45m</text>
+              <text x="360" y="30" font-size="10" font-weight="bold" fill="#0f766e">11.05m</text>
+              <text x="460" y="10" font-size="10" font-weight="bold" fill="#0f766e">14.80m</text>
+            </svg>
+          </div>
+
+          <p style="margin-top: 8px;">
+            <strong>Test Suite Integrity:</strong> <strong>238 passing tests</strong> across 16 test modules with 0
+            failures and 0 xfails. 100% verification accuracy on invented/hallucinated token detection.
+          </p>
+        </div>
+
+        <!-- 8. Key Contributions & Future Work -->
+        <div class="card">
+          <div class="card-title"><span class="icon">🌟</span> 8. Key Contributions & Future Work</div>
+          <ul>
+            <li><strong>Clinical Guideline Fidelity:</strong> First open-source platform enforcing exact SMFM 2022
+              timing metrics without heuristic drift.</li>
+            <li><strong>Safety-First Architecture:</strong> Clean separation between life-critical deterministic alerts
+              and AI-assisted documentation.</li>
+            <li><strong>Future Work:</strong> Direct HL7/FHIR monitor telemetry ingestion, integration into Epic/Cerner
+              EHR, and clinical evaluation in maternal mannequin simulation labs.</li>
+          </ul>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- FOOTER -->
+    <footer>
+      <div>
+        <strong>GitHub:</strong> <a href="https://github.com/devans2718/hypertension-alert-pregnancy"
+          target="_blank">github.com/devans2718/hypertension-alert-pregnancy</a> &bull; <em>Research Prototype — Not for
+          Clinical Use</em>
+      </div>
+    </footer>
+
+  </div>
+
+</body>
+
+</html>
