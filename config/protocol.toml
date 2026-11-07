@@ -47,7 +47,11 @@ target_minutes = 60
 # Notification is the CONFIRMED event. Exactly this long, in whole minutes, doesn't
 # escalate.
 # Assume: no source yet.
-# Placeholder, for the team to decide: a late confirmation gets the same timeout.
-# Severe at 0, non-severe at 15 and severe at 50 confirms at 50 and escalates just
-# after 60, when the treatment window has closed. See _should_escalate in episodes.py.
 unacknowledged_minutes = 10
+# Also escalate once this little of the treatment window is left, whichever comes
+# first, so an escalation never lands after the deadline. This matters only for a
+# late confirmation: severe at 0, non-severe at 15 and severe at 50 confirms at 50,
+# and escalates then, not after 60. Counted from onset, like the treatment target.
+# Assume: decided 2026-11-06, no source yet. Pitch: to confirm, along
+# with who an escalation goes to. See _should_escalate in episodes.py.
+before_deadline_minutes = 10
