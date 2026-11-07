@@ -203,7 +203,11 @@ def test_reopening_after_acknowledgment_does_not_escalate():
 
 
 def test_every_fold_back_reports_a_reopening():
-    """Figure 1's example B, as the full stream a consumer sees."""
+    """Figure 1's example B, as the full stream a consumer sees.
+
+    Nobody acknowledges the confirmation at 30, so the reopening at 50, with
+    10 minutes of the treatment window left, escalates.
+    """
     events = run(
         severe(0), non_severe(10), severe(30), non_severe(40),
         severe(50), non_severe(60), non_severe(80),
@@ -215,6 +219,7 @@ def test_every_fold_back_reports_a_reopening():
         (EventKind.CONFIRMED, 30),
         (EventKind.EPISODE_CLOSED, 40),
         (EventKind.EPISODE_REOPENED, 50),
+        (EventKind.ESCALATED, 50),
         (EventKind.EPISODE_CLOSED, 60),
     ]
 
@@ -365,12 +370,12 @@ def test_the_flag_names_the_protocols_mark():
 # Late confirmation
 
 
-def test_late_confirmation_placeholder():
-    """PLACEHOLDER, not a decision: the team is choosing this rule (see #16).
+def test_late_confirmation_escalates_before_the_deadline():
+    """Confirmed at 50, with 10 minutes left, so it escalates then, not after 60.
 
-    Confirming at 50 and allowing the same 10 minutes escalates just after 60,
-    when the treatment window has closed. If the team picks something else,
-    change _should_escalate in episodes.py and this test.
+    Decided 2026-11-06, and an assumption until the pitch team
+    confirms it: whichever comes first, the timeout or 10 minutes before the
+    treatment deadline.
     """
     events = run(severe(0), 15, non_severe(15), 50, severe(50), 60, 61)
     assert summary(events) == [
@@ -379,5 +384,28 @@ def test_late_confirmation_placeholder():
         (EventKind.EPISODE_CLOSED, 15),
         (EventKind.EPISODE_REOPENED, 50),
         (EventKind.CONFIRMED, 50),
-        (EventKind.ESCALATED, 61),
+        (EventKind.ESCALATED, 50),
     ]
+
+
+def test_confirmation_after_40_escalates_when_10_minutes_are_left():
+    # Confirmed at 45: the timeout would end at 56, but 50 comes first.
+    events = run(severe(0), non_severe(15), severe(45), 49, 50)
+    assert (EventKind.ESCALATED, 50) in summary(events)
+    assert count(run(severe(0), non_severe(15), severe(45), 49), EventKind.ESCALATED) == 0
+
+
+def test_on_time_confirmation_keeps_the_timeout():
+    # Confirmed at 16, so the timeout (27) comes long before 50.
+    assert (EventKind.ESCALATED, 27) in summary(run(severe(0), 16, 27))
+
+
+def test_acknowledgment_also_stops_the_deadline_escalation():
+    events = run(severe(0), non_severe(15), severe(45), acknowledged(46), 50, 70)
+    assert count(events, EventKind.ESCALATED) == 0
+
+
+def test_deadline_lead_comes_from_the_protocol():
+    longer = replace(PROTOCOL, escalate_before_deadline=timedelta(minutes=20))
+    events = run(severe(0), non_severe(15), severe(45), protocol=longer)
+    assert (EventKind.ESCALATED, 45) in summary(events)
