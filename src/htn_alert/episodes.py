@@ -58,11 +58,11 @@ class _Episode:
 def _should_escalate(episode: _Episode, now: datetime, protocol: Protocol) -> bool:
     """Whether a notified provider's silence should escalate by `now`.
 
-    The single home of the escalation rule. The rule that applies to a late
-    confirmation is a placeholder until the team decides it (see #16 and
-    config/protocol.toml), so a different choice should only change this
-    function. `onset` and `confirmed_at` are both on the episode for that
-    reason, and returning True here would escalate at once, because observe()
+    The single home of the escalation rule. Two clocks run, and whichever
+    runs out first escalates: the provider's silence after notification, and
+    the time left in the treatment window. The second exists for a late
+    confirmation, whose timeout would otherwise end after the deadline (see
+    config/protocol.toml). Returning True escalates at once, because observe()
     and tick() both ask after updating the episode.
     """
     if episode.confirmed_at is None or episode.closed_at is not None:
@@ -72,7 +72,14 @@ def _should_escalate(episode: _Episode, now: datetime, protocol: Protocol) -> bo
     # CONFIRMED is the notification. A closing cancels the timer, so a
     # reopening starts it again from the reopening.
     notified = max(episode.confirmed_at, episode.reopened_at or episode.confirmed_at)
-    return _elapsed(now, notified) > protocol.escalate_unacknowledged
+    silent_too_long = _elapsed(now, notified) > protocol.escalate_unacknowledged
+    # Counted from onset, like the treatment target; a reopening doesn't move it.
+    # "At most this much left" includes the boundary minute itself.
+    window_nearly_gone = (
+        _elapsed(now, episode.onset)
+        >= protocol.treatment_target - protocol.escalate_before_deadline
+    )
+    return silent_too_long or window_nearly_gone
 
 
 class EpisodeTracker:
