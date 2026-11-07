@@ -2,10 +2,16 @@
 
 Real-time recognition, 15-minute repeat confirmation (fast demo mode: 15m = 10s),
 live flowsheet monitoring across multiple rooms and beds, and automated clinical alerts.
+
+The app holds only what was entered: each patient's readings and staff actions.
+Episode states come from EpisodeTracker (src/htn_alert/episodes.py), replayed
+through app/playback.py on every refresh, so the app and the evaluation run on
+the same rules. No episode rules live in this file.
 """
 
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -15,6 +21,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import streamlit as st
+from app.playback import (
+    EpisodePhase,
+    calculate_countdown,
+    evaluate_playback_episode,
+    most_urgent_status,
+)
+from htn_alert.contract import Action, ActionKind, EventKind, Reading
+from htn_alert.emr import draft_emr_entry, verify_traceability
 from htn_alert.protocol import load_protocol
 
 # Page Configuration
@@ -29,16 +43,29 @@ protocol = load_protocol()
 # Protocol Thresholds
 SEVERE_SYS = protocol.severe_systolic    # 160 mmHg
 SEVERE_DIA = protocol.severe_diastolic   # 110 mmHg
-DEMO_COUNTDOWN_SECONDS = 10.0            # 15 minutes treated as 10 seconds for demo
+REPEAT_MIN_MINUTES = protocol.repeat_min // timedelta(minutes=1)        # 15
+REPEAT_MAX_MINUTES = protocol.repeat_max // timedelta(minutes=1)        # 60
+TREATMENT_MINUTES = protocol.treatment_target // timedelta(minutes=1)   # 60
 DEMO_NOTICE_SECONDS = 10.0               # Notice auto-checks at 10s (bedside notification delivered)
+
+# Fast demo clock: 15 simulated minutes pass in 10 real seconds. Every time the
+# app shows or hands to EpisodeTracker is simulated time, so the protocol's
+# minutes (repeat window, treatment target, escalation) play out on screen.
+SIM_SPEEDUP = (15 * 60) / 10.0
+# How long a resolved episode keeps the alert banner, in simulated time.
+RESOLVED_BANNER = timedelta(minutes=20)
 
 
 # Session State Initialization
 if "records" not in st.session_state:
     st.session_state.records = []
-if "active_episodes" not in st.session_state:
-    # Key: "Room / Bed", Value: dict with episode state
-    st.session_state.active_episodes = {}
+if "inputs" not in st.session_state:
+    # Key: "Room / Bed". Value: that patient's readings and actions, in the
+    # order entered. This is the app's only episode-related state.
+    st.session_state.inputs = {}
+if "clock_start" not in st.session_state:
+    # (real start, simulated start): simulated time runs from the session's start.
+    st.session_state.clock_start = (time.time(), datetime.now().replace(microsecond=0))
 if "active_alert" not in st.session_state:
     st.session_state.active_alert = None
 if "room_val" not in st.session_state:
@@ -144,16 +171,79 @@ def clear_all_selections():
                 st.session_state[k] = False
 
 
+def sim_now() -> datetime:
+    """The demo's simulated time: the session's start plus elapsed real time, sped up."""
+    real_start, sim_start = st.session_state.clock_start
+    return sim_start + timedelta(seconds=(time.time() - real_start) * SIM_SPEEDUP)
+
+
+def patient_inputs(patient_key: str) -> dict:
+    """This patient's readings and actions, creating the empty lists on first use."""
+    return st.session_state.inputs.setdefault(patient_key, {"readings": [], "actions": []})
+
+
+def record_action(patient_key: str, kind: ActionKind):
+    """Hand a staff action (acknowledgment, dose) to the episode logic's inputs."""
+    patient_inputs(patient_key)["actions"].append(Action(patient_key, sim_now(), kind))
+
+
+def rename_patient(old_key: str, new_key: str):
+    """Move a patient's inputs to a new Room / Bed key when an edit changes it.
+
+    The inputs carry the key as patient_id, so each one is re-labelled; otherwise
+    the old key's history would keep producing alerts with no row in the table.
+    """
+    if old_key == new_key or old_key not in st.session_state.inputs:
+        return
+    old = st.session_state.inputs.pop(old_key)
+    st.session_state.inputs[new_key] = {
+        "readings": [replace(r, patient_id=new_key) for r in old["readings"]],
+        "actions": [replace(a, patient_id=new_key) for a in old["actions"]],
+    }
+
+
+def patient_status(patient_key: str, now: datetime):
+    """This patient's episode status at `now`, replayed through EpisodeTracker."""
+    entered = st.session_state.inputs.get(patient_key)
+    if not entered or not entered["readings"]:
+        return None
+    return evaluate_playback_episode(
+        readings=entered["readings"],
+        protocol=protocol,
+        simulated_now=now,
+        actions=entered["actions"],
+    )
+
+
+def current_episode_events(status) -> list:
+    """The events of the patient's latest episode, from its EPISODE_OPENED on.
+
+    A patient's event list covers every episode they've had; the banner and the
+    EMR draft are about the current one only.
+    """
+    opened_at = max(i for i, e in enumerate(status.events) if e.kind is EventKind.EPISODE_OPENED)
+    return status.events[opened_at:]
+
+
+def onset_reading(patient_key: str, opened) -> Reading | None:
+    """The reading that opened an episode: the one logged at EPISODE_OPENED's time."""
+    readings = st.session_state.inputs[patient_key]["readings"]
+    return next((r for r in readings if r.time == opened.time), None)
+
+
 def log_reading(r_val: str, p_val: str, sys_val: int, dia_val: int, is_edit: bool = False):
     """Log or update a blood pressure measurement for a specific patient.
-    
+
     Guarantees strict per-patient separation and eliminates duplicates:
     - If the patient already exists in the flowsheet, their vitals are updated in place.
     - If the patient is new, a separate record is created with Notice and Update starting unchecked.
+
+    The reading also goes to the patient's inputs, timed on the demo clock; what
+    it means for the episode is EpisodeTracker's call, made at render time.
     """
     is_sev = (sys_val >= SEVERE_SYS) or (dia_val >= SEVERE_DIA)
-    now_time = datetime.now()
-    recheck_time_str = (now_time + timedelta(minutes=15)).strftime("%H:%M:%S")
+    now_time = sim_now()
+    recheck_time_str = (now_time + timedelta(minutes=15)).strftime("%H:%M")
     patient_key = f"{r_val} / {p_val}"
     current_ts = time.time()
 
@@ -164,20 +254,17 @@ def log_reading(r_val: str, p_val: str, sys_val: int, dia_val: int, is_edit: boo
             existing_record = r
             break
 
-    existing_episode = st.session_state.active_episodes.get(patient_key)
-
     if existing_record is not None:
         # Existing patient -> Update vitals in place and mark Update checked
         existing_record["room"] = r_val
         existing_record["patient_id"] = p_val
         existing_record["systolic"] = int(sys_val)
         existing_record["diastolic"] = int(dia_val)
-        existing_record["time_str"] = now_time.strftime("%H:%M:%S")
+        existing_record["time_str"] = now_time.strftime("%H:%M")
         existing_record["recheck_str"] = recheck_time_str
         existing_record["timestamp"] = current_ts
         existing_record["is_severe"] = is_sev
         existing_record["is_updated"] = True  # Follow-up reading / nurse update recorded
-        target_rec = existing_record
     else:
         # New separate patient -> Add fresh record with its own timestamp and unchecked boxes
         new_entry = {
@@ -186,66 +273,20 @@ def log_reading(r_val: str, p_val: str, sys_val: int, dia_val: int, is_edit: boo
             "patient_key": patient_key,
             "systolic": int(sys_val),
             "diastolic": int(dia_val),
-            "time_str": now_time.strftime("%H:%M:%S"),
+            "time_str": now_time.strftime("%H:%M"),
             "recheck_str": recheck_time_str,
             "timestamp": current_ts,
             "is_severe": is_sev,
-            "countdown_start": current_ts if is_sev else None,
             "episode_id": int(time.time() * 1000) + len(st.session_state.records),
             "is_noticed": False,  # Starts unchecked; auto-checks at 10s based on this record's timer
             "is_updated": False,  # Starts unchecked; checks when updated by nurse
         }
         st.session_state.records.append(new_entry)
-        target_rec = new_entry
 
-    # Patient Episode State Machine
-    if is_sev:
-        if existing_episode and existing_episode.get("state") in ("REPEAT_PENDING", "REPEAT_OVERDUE"):
-            # Second severe reading recorded -> Persistent Severe Hypertension confirmed!
-            st.session_state.active_episodes[patient_key] = {
-                "state": "CONFIRMED_SEVERE",
-                "onset_ts": existing_episode.get("onset_ts", current_ts),
-                "confirmed_ts": current_ts,
-                "first_bp": existing_episode.get("first_bp", f"{sys_val}/{dia_val}"),
-                "repeat_bp": f"{sys_val}/{dia_val}",
-                "med_given": False,
-                "confirmed_time_str": now_time.strftime("%H:%M:%S"),
-            }
-            target_rec["is_noticed"] = True
-            target_rec["is_updated"] = True
-        elif existing_episode and existing_episode.get("state") == "CONFIRMED_SEVERE":
-            # Subsequent reading during active confirmed episode
-            existing_episode["repeat_bp"] = f"{sys_val}/{dia_val}"
-            target_rec["is_noticed"] = True
-            target_rec["is_updated"] = True
-        else:
-            # First severe reading -> Starts 15-minute repeat window (10s in fast demo)
-            st.session_state.active_episodes[patient_key] = {
-                "state": "REPEAT_PENDING",
-                "onset_ts": current_ts,
-                "first_bp": f"{sys_val}/{dia_val}",
-                "med_given": False,
-                "onset_time_str": now_time.strftime("%H:%M:%S"),
-            }
-            target_rec["countdown_start"] = current_ts
-    else:
-        # Non-severe reading
-        if existing_episode and existing_episode.get("state") in ("REPEAT_PENDING", "REPEAT_OVERDUE"):
-            # Follow-up resolved
-            st.session_state.active_episodes[patient_key] = {
-                "state": "RESOLVED",
-                "resolved_ts": current_ts,
-                "first_bp": existing_episode.get("first_bp", "168/112"),
-                "repeat_bp": f"{sys_val}/{dia_val}",
-                "resolved_time_str": now_time.strftime("%H:%M:%S"),
-            }
-            target_rec["is_updated"] = True
-        elif existing_episode and existing_episode.get("state") == "CONFIRMED_SEVERE":
-            pass
-        else:
-            # Normal routine monitoring for this patient
-            if patient_key in st.session_state.active_episodes:
-                del st.session_state.active_episodes[patient_key]
+    # The episode logic sees every reading as it arrives, on the demo clock.
+    patient_inputs(patient_key)["readings"].append(
+        Reading(patient_key, now_time, int(sys_val), int(dia_val))
+    )
 
 
 def fill_test_case(r_val: str, p_val: str, s_val: int, d_val: int):
@@ -279,7 +320,7 @@ def apply_reset():
     """Reset all records, active episodes, and selections."""
     clear_all_selections()
     st.session_state.records = []
-    st.session_state.active_episodes = {}
+    st.session_state.inputs = {}
     st.session_state.active_alert = None
     st.session_state.room_val = "Room 302"
     st.session_state.bed_val = "Bed-04"
@@ -387,7 +428,7 @@ with col_left:
         "🟢 Normal Routine\n(120/78)",
         use_container_width=True,
         on_click=fill_test_case,
-        args=("Room 105", "Bed-02", 120, 78),
+        args=("Room 302", "Bed-04", 120, 78),
     )
 
     st.markdown("---")
@@ -398,41 +439,25 @@ with col_left:
             target_id = st.session_state.selected_record_id
             for r in st.session_state.records:
                 if r["episode_id"] == target_id:
+                    # An update is the patient's next reading, logged now. If the
+                    # edit changed Room or Bed, the history moves with the row.
+                    old_key = r["patient_key"]
                     r["room"] = str(st.session_state.room_val).strip() or "Room 302"
                     r["patient_id"] = str(st.session_state.bed_val).strip() or "Bed-04"
                     r["patient_key"] = f"{r['room']} / {r['patient_id']}"
+                    rename_patient(old_key, r["patient_key"])
                     r["systolic"] = int(st.session_state.sys_val)
                     r["diastolic"] = int(st.session_state.dia_val)
                     is_sev = (r["systolic"] >= SEVERE_SYS) or (r["diastolic"] >= SEVERE_DIA)
                     r["is_severe"] = is_sev
-                    r["time_str"] = datetime.now().strftime("%H:%M:%S")
-                    r["recheck_str"] = (datetime.now() + timedelta(minutes=15)).strftime("%H:%M:%S")
+                    logged_at = sim_now()
+                    r["time_str"] = logged_at.strftime("%H:%M")
+                    r["recheck_str"] = (logged_at + timedelta(minutes=15)).strftime("%H:%M")
                     r["timestamp"] = time.time()
                     r["is_updated"] = True
-
-                    # Update episode state if severe
-                    ep = st.session_state.active_episodes.get(r["patient_key"])
-                    if is_sev:
-                        if ep and ep.get("state") in ("REPEAT_PENDING", "REPEAT_OVERDUE"):
-                            ep["state"] = "CONFIRMED_SEVERE"
-                            ep["repeat_bp"] = f"{r['systolic']}/{r['diastolic']}"
-                            r["is_noticed"] = True
-                        else:
-                            st.session_state.active_episodes[r["patient_key"]] = {
-                                "state": "REPEAT_PENDING",
-                                "onset_ts": time.time(),
-                                "first_bp": f"{r['systolic']}/{r['diastolic']}",
-                                "med_given": False,
-                                "onset_time_str": datetime.now().strftime("%H:%M:%S"),
-                            }
-                    else:
-                        if ep and ep.get("state") in ("REPEAT_PENDING", "REPEAT_OVERDUE"):
-                            ep["state"] = "RESOLVED"
-                            ep["resolved_ts"] = time.time()
-                            ep["repeat_bp"] = f"{r['systolic']}/{r['diastolic']}"
-                            ep["resolved_time_str"] = datetime.now().strftime("%H:%M:%S")
-                        elif r["patient_key"] in st.session_state.active_episodes:
-                            del st.session_state.active_episodes[r["patient_key"]]
+                    patient_inputs(r["patient_key"])["readings"].append(
+                        Reading(r["patient_key"], logged_at, r["systolic"], r["diastolic"])
+                    )
                     break
             clear_all_selections()
             st.rerun()
@@ -469,6 +494,7 @@ with col_right:
     @st.fragment(run_every="1s")
     def render_alert_and_table():
         current_time_sec = time.time()
+        now = sim_now()
 
         # Check automated protocol tracking (Notice auto-checks at 10s) per individual record
         for r in st.session_state.records:
@@ -476,150 +502,160 @@ with col_right:
             if elapsed >= DEMO_NOTICE_SECONDS:
                 r["is_noticed"] = True
 
-        # Check severe countdowns across active episodes for each individual patient
-        for pkey, ep in list(st.session_state.active_episodes.items()):
-            if ep.get("state") == "REPEAT_PENDING":
-                elapsed = current_time_sec - ep.get("onset_ts", 0)
-                if elapsed >= DEMO_COUNTDOWN_SECONDS:
-                    ep["state"] = "REPEAT_OVERDUE"
-                    for r in st.session_state.records:
-                        if r["patient_key"] == pkey:
-                            r["is_noticed"] = True
+        # Each patient's episode status at the demo clock's `now`. Deadlines (a
+        # missed recheck, an unanswered notification) fire here as time passes.
+        statuses = {}
+        for r in st.session_state.records:
+            status = patient_status(r["patient_key"], now)
+            if status is not None:
+                statuses[r["patient_key"]] = status
+
+        def bp(reading) -> str:
+            return f"{reading.systolic}/{reading.diastolic}" if reading else "—"
+
+        def hhmm(t) -> str:
+            return t.strftime("%H:%M") if t else "—"
+
+        def severe_banner(title: str, detail: str, footer: str):
+            st.html(f"""<div class="alert-box-severe">
+                <div style="font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px;">
+                    <span>🚨</span>
+                    <span>{title}</span>
+                </div>
+                <div style="font-size: 13.5px; margin-top: 6px; font-weight: 500; line-height: 1.45;">
+                    {detail}
+                </div>
+                <div style="font-size: 11.5px; color: #b91c1c; margin-top: 4px; font-weight: 600;">
+                    {footer}
+                </div>
+            </div>""")
 
         # ---------------------------------------------------------------------
         # 1. TOP-RIGHT ALERT SPACE: Evaluates Highest Priority Clinical Alert
         # ---------------------------------------------------------------------
-        alert_info = None
+        top = most_urgent_status(statuses, now, RESOLVED_BANNER)
 
-        # Priority 1: Persistent Severe Hypertension Confirmed
-        for pkey, ep in st.session_state.active_episodes.items():
-            if ep.get("state") == "CONFIRMED_SEVERE":
-                alert_info = {
-                    "level": "CONFIRMED",
-                    "patient_key": pkey,
-                    "title": f"PERSISTENT SEVERE HYPERTENSION CONFIRMED: {pkey}",
-                    "detail": (
-                        f"Repeat severe reading {ep.get('repeat_bp', '')} mmHg recorded within repeat confirmation window! "
-                        f"First-line IV labetalol / IV hydralazine / oral nifedipine required within 60 minutes of onset."
-                    ),
-                    "timestamp": ep.get("confirmed_time_str", datetime.now().strftime("%H:%M:%S")),
-                    "ep_ref": ep,
-                }
-                break
+        def next_deadline(status) -> str:
+            """The time the most urgent patient's next step falls due, in a few words.
 
-        # Priority 2: Repeat Blood Pressure Overdue
-        if not alert_info:
-            for pkey, ep in st.session_state.active_episodes.items():
-                if ep.get("state") == "REPEAT_OVERDUE":
-                    alert_info = {
-                        "level": "OVERDUE",
-                        "patient_key": pkey,
-                        "title": f"REPEAT BLOOD PRESSURE DUE / OVERDUE: {pkey}",
-                        "detail": (
-                            f"15-Minute confirmation window reached without repeat check! "
-                            f"Persistent severe hypertension assumed per SMFM missing recheck protocol rule."
-                        ),
-                        "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "ep_ref": ep,
-                    }
-                    break
+            Read from the status's own target times; the app computes no deadline
+            itself. Escalation's time isn't shown, since its rule belongs to
+            EpisodeTracker and is still being decided.
+            """
+            if status is None:
+                return ""
+            pid = status.patient_id
+            if status.phase is EpisodePhase.REPEAT_PENDING:
+                return f"Next: repeat reading for {pid} due {hhmm(status.repeat_target_time)}"
+            if status.phase is EpisodePhase.REPEAT_DUE:
+                return f"Now: repeat reading for {pid} is due"
+            if status.phase in (EpisodePhase.CONFIRMED, EpisodePhase.ESCALATED):
+                if any(e.kind is EventKind.DOSE_RECORDED for e in current_episode_events(status)):
+                    return ""
+                _, passed, _ = calculate_countdown(status.treatment_target_time, now)
+                verb = "passed at" if passed else "at"
+                return f"Next: treatment target for {pid} {verb} {hhmm(status.treatment_target_time)}"
+            if status.phase is EpisodePhase.RESOLVED:
+                return f"Watch: {pid} reopens if severe again by {hhmm(status.repeat_deadline_time)}"
+            return ""
 
-        # Priority 3: Severe Onset / Repeat Pending (Countdown running)
-        if not alert_info:
-            for pkey, ep in st.session_state.active_episodes.items():
-                if ep.get("state") == "REPEAT_PENDING":
-                    rem_sec = max(0.0, DEMO_COUNTDOWN_SECONDS - (current_time_sec - ep.get("onset_ts", 0)))
-                    alert_info = {
-                        "level": "SEVERE_FIRST",
-                        "patient_key": pkey,
-                        "title": f"CRITICAL SEVERE ALERT: {pkey}",
-                        "detail": (
-                            f"Severe blood pressure {ep.get('first_bp', '')} mmHg detected (≥160/110 threshold). "
-                            f"15-Minute repeat measurement confirmation active ({rem_sec:.1f}s remaining in demo mode)."
-                        ),
-                        "timestamp": ep.get("onset_time_str", datetime.now().strftime("%H:%M:%S")),
-                        "ep_ref": ep,
-                    }
-                    break
+        # The demo clock, shown because every countdown, deadline and logged
+        # time on the page is in simulated time; without it, when a button
+        # needs pressing isn't visible.
+        upcoming = next_deadline(top)
+        st.html(f"""<div style="background: #0f172a; color: #f8fafc; border-radius: 8px; padding: 8px 16px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: baseline; gap: 10px;">
+                <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: #94a3b8;">🕒 Simulated time (24-hour)</span>
+                <span style="font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums;">{now.strftime("%H:%M")}</span>
+                <span style="font-size: 12px; color: #94a3b8; margin-left: auto;">90× speed · 15 min = 10 s</span>
+            </div>
+            {f'<div style="font-size: 14px; font-weight: 600; color: #fde68a; margin-top: 2px;">{upcoming}</div>' if upcoming else ""}
+        </div>""")
 
-        # Priority 4: Recently Resolved Episode
-        if not alert_info:
-            for pkey, ep in st.session_state.active_episodes.items():
-                if ep.get("state") == "RESOLVED":
-                    if (current_time_sec - ep.get("resolved_ts", 0)) < 15.0:
-                        alert_info = {
-                            "level": "RESOLVED",
-                            "patient_key": pkey,
-                            "title": f"EPISODE RESOLVED: {pkey}",
-                            "detail": f"Follow-up reading {ep.get('repeat_bp', '')} mmHg returned to non-severe reference range.",
-                            "timestamp": ep.get("resolved_time_str", datetime.now().strftime("%H:%M:%S")),
-                            "ep_ref": ep,
-                        }
-                        break
+        if top is not None and top.phase in (EpisodePhase.CONFIRMED, EpisodePhase.ESCALATED):
+            pkey = top.patient_id
+            episode_events = current_episode_events(top)
+            onset = episode_events[0]
+            confirmed = next(e for e in episode_events if e.kind is EventKind.CONFIRMED)
+            dose = next((e for e in episode_events if e.kind is EventKind.DOSE_RECORDED), None)
+            acked = any(
+                a.kind is ActionKind.PROVIDER_ACKNOWLEDGED and a.time >= onset.time
+                for a in st.session_state.inputs[pkey]["actions"]
+            )
+            _, target_passed, left = calculate_countdown(top.treatment_target_time, now)
 
-        # Render Alert Banner
-        if alert_info and alert_info["level"] == "CONFIRMED":
-            pkey = alert_info["patient_key"]
-            ep = alert_info["ep_ref"]
-            st.html(f"""<div class="alert-box-severe">
-                <div style="font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px;">
-                    <span>🚨</span>
-                    <span>{alert_info['title']}</span>
-                </div>
-                <div style="font-size: 13.5px; margin-top: 6px; font-weight: 500; line-height: 1.45;">
-                    {alert_info['detail']}
-                </div>
-                <div style="font-size: 11.5px; color: #b91c1c; margin-top: 4px; font-weight: 600;">
-                    Alert Time: {alert_info['timestamp']} &bull; Speed Mode: 15 min = 10s &bull; Medication Target: &le;60 min
-                </div>
-            </div>""")
-
-            # Interactive Medication Administration & EMR Documentation
-            act_col1, act_col2 = st.columns(2)
-            if not ep.get("med_given"):
-                if act_col1.button("💊 Record Medication Dose", use_container_width=True, type="secondary"):
-                    ep["med_given"] = True
-                    ep["med_time"] = datetime.now().strftime("%H:%M:%S")
-                    st.rerun()
+            if top.phase is EpisodePhase.ESCALATED:
+                title = f"ESCALATED, NOTIFICATION NOT ANSWERED: {pkey}"
             else:
-                act_col1.success(f"✅ Dose Given: IV Labetalol 20mg ({ep.get('med_time')})")
+                title = f"PERSISTENT SEVERE HYPERTENSION CONFIRMED: {pkey}"
+            target_line = (
+                f"Treatment target passed at {hhmm(top.treatment_target_time)} ({left})."
+                if target_passed
+                else f"Treatment target: {hhmm(top.treatment_target_time)}, {TREATMENT_MINUTES} minutes from onset ({left} left)."
+            )
+            severe_banner(
+                title,
+                f"First severe reading {bp(onset_reading(pkey, onset))} mmHg at {hhmm(onset.time)}. "
+                f"Confirmed at {hhmm(confirmed.time)}: {confirmed.detail}; provider notified. "
+                + (f"Dose recorded at {hhmm(dose.time)}." if dose else target_line),
+                f"Confirmed: {hhmm(confirmed.time)}",
+            )
 
-            with act_col2.popover("📋 AI-Drafted EMR Note", use_container_width=True):
-                st.markdown("**AI-Drafted EMR Nursing Documentation (Traceable SBAR)**")
-                st.caption("*Generated strictly outside the safety loop for post-event documentation.*")
-                onset_str = ep.get("first_bp", "168/112")
-                rpt_str = ep.get("repeat_bp", "162/108")
-                t_str = alert_info['timestamp']
-                med_line = f"- {ep.get('med_time')}: Antihypertensive medication dose recorded (IV Labetalol 20mg)." if ep.get("med_given") else "- Pending: First-line antihypertensive administration."
-                st.code(f"""EMR Bedside Nursing Note — Patient: {pkey}
-Clinical Event Timeline:
-- {t_str}: Initial severe blood pressure recorded ({onset_str} mmHg). Episode opened.
-- {t_str}: Scheduled repeat blood pressure due within 15-minute window.
-- {t_str}: Confirmed persistent severe blood pressure ({rpt_str} mmHg). Provider notified.
-{med_line}
-Documentation Status: Draft entry prepared for nurse review and verification. Zero hallucinated tokens.""", language="markdown")
+            # Staff actions go to the episode logic as Actions; an acknowledgment or
+            # a dose stops the escalation timer.
+            act_col1, act_col2, act_col3 = st.columns(3)
+            if acked or dose:
+                act_col1.success("✅ Provider responded")
+            elif act_col1.button("📟 Provider Acknowledged", use_container_width=True):
+                record_action(pkey, ActionKind.PROVIDER_ACKNOWLEDGED)
+                st.rerun()
+            if dose:
+                act_col2.success(f"✅ Dose recorded ({hhmm(dose.time)})")
+            elif act_col2.button("💊 Record Medication Dose", use_container_width=True, type="secondary"):
+                record_action(pkey, ActionKind.DOSE_GIVEN)
+                st.rerun()
 
-        elif alert_info and alert_info["level"] in ("SEVERE_FIRST", "OVERDUE"):
-            st.html(f"""<div class="alert-box-severe">
-                <div style="font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px;">
-                    <span>🚨</span>
-                    <span>{alert_info['title']}</span>
-                </div>
-                <div style="font-size: 13.5px; margin-top: 6px; font-weight: 500; line-height: 1.45;">
-                    {alert_info['detail']}
-                </div>
-                <div style="font-size: 11.5px; color: #b91c1c; margin-top: 4px; font-weight: 600;">
-                    Alert Time: {alert_info['timestamp']} &bull; Speed Mode: 15 min = 10s
-                </div>
-            </div>""")
-        elif alert_info and alert_info["level"] == "RESOLVED":
+            with act_col3.popover("📋 EMR Note Draft", use_container_width=True):
+                draft = draft_emr_entry(episode_events)
+                check = verify_traceability(draft, episode_events)
+                st.markdown("**EMR nursing note draft, from this episode's events**")
+                st.caption("*Drafted outside the alerting loop, for the nurse to review. Template for now; no model is called yet.*")
+                st.code(draft, language="markdown")
+                if check.valid:
+                    st.caption("✅ Every time and number in the draft traces to an event.")
+                else:
+                    st.caption("⚠️ Not traceable to an event: " + ", ".join(check.untraceable_items))
+
+        elif top is not None and top.phase is EpisodePhase.REPEAT_DUE:
+            onset = current_episode_events(top)[0]
+            severe_banner(
+                f"REPEAT BLOOD PRESSURE DUE: {top.patient_id}",
+                f"{REPEAT_MIN_MINUTES} minutes since the first severe reading ({bp(onset_reading(top.patient_id, onset))} mmHg at {hhmm(onset.time)}). "
+                f"Without a reading below the severe range in this minute, the episode confirms as persistent "
+                f"and the provider is notified.",
+                f"Due: {hhmm(top.repeat_target_time)}",
+            )
+
+        elif top is not None and top.phase is EpisodePhase.REPEAT_PENDING:
+            onset = current_episode_events(top)[0]
+            _, _, left = calculate_countdown(top.repeat_target_time, now)
+            severe_banner(
+                f"CRITICAL SEVERE ALERT: {top.patient_id}",
+                f"Severe blood pressure {bp(onset_reading(top.patient_id, onset))} mmHg detected (≥160/110 threshold). "
+                f"Repeat reading due at {hhmm(top.repeat_target_time)} ({left} left).",
+                f"Alert Time: {hhmm(onset.time)}",
+            )
+
+        elif top is not None and top.phase is EpisodePhase.RESOLVED:
+            closed = top.latest_event
             st.html(f"""<div class="alert-box-normal">
                 <div style="font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
                     <span>🟢</span>
-                    <span>{alert_info['title']}</span>
+                    <span>EPISODE RESOLVED: {top.patient_id}</span>
                 </div>
                 <div style="font-size: 13px; margin-top: 4px;">
-                    {alert_info['detail']} (Logged at {alert_info['timestamp']})
+                    Reading {bp(top.latest_reading)} mmHg: {closed.detail} (at {hhmm(closed.time)}).
+                    A severe reading within {REPEAT_MAX_MINUTES} minutes of onset reopens the episode.
                 </div>
             </div>""")
         else:
@@ -657,31 +693,25 @@ Documentation Status: Draft entry prepared for nurse review and verification. Ze
         for rec in reversed(st.session_state.records):
             rec_id = rec["episode_id"]
             pkey = rec["patient_key"]
-            ep = st.session_state.active_episodes.get(pkey, {})
-            ep_state = ep.get("state", "NONE")
+            status = statuses.get(pkey)
+            phase = status.phase if status else EpisodePhase.NONE
 
             # Determine Re-check Time
-            if rec.get("recheck_str") and rec["recheck_str"] != "—":
-                recheck_val = rec["recheck_str"]
-            else:
-                recheck_val = (datetime.fromtimestamp(rec["timestamp"]) + timedelta(minutes=15)).strftime("%H:%M:%S")
+            recheck_val = rec.get("recheck_str") or "—"
 
             if rec["is_severe"]:
                 recheck_display = f'<strong style="color: #dc2626; font-size: 13px;">{recheck_val}</strong>'
-                if ep_state == "CONFIRMED_SEVERE":
-                    status_html = '<span class="badge-severe">🚨 Confirmed</span>'
-                elif ep_state == "REPEAT_PENDING":
-                    status_html = '<span class="badge-severe">🟡 Repeat Due</span>'
-                elif ep_state == "REPEAT_OVERDUE":
-                    status_html = '<span class="badge-severe">🟠 Overdue</span>'
-                else:
-                    status_html = '<span class="badge-severe">🟡 Severe</span>'
             else:
                 recheck_display = f'<strong style="font-size: 13px;">{recheck_val}</strong>'
-                if ep_state == "RESOLVED":
-                    status_html = '<span class="badge-normal">🟢 Resolved</span>'
-                else:
-                    status_html = '<span class="badge-normal">🟢 Normal</span>'
+            # The badge is the episode's phase, not this one reading's range: an
+            # episode stays confirmed until a reading below the severe range.
+            status_html = {
+                EpisodePhase.ESCALATED: '<span class="badge-severe">🚨 Escalated</span>',
+                EpisodePhase.CONFIRMED: '<span class="badge-severe">🚨 Confirmed</span>',
+                EpisodePhase.REPEAT_DUE: '<span class="badge-severe">🟠 Repeat Due</span>',
+                EpisodePhase.REPEAT_PENDING: '<span class="badge-severe">🟡 Repeat Pending</span>',
+                EpisodePhase.RESOLVED: '<span class="badge-normal">🟢 Resolved</span>',
+            }.get(phase, '<span class="badge-normal">🟢 Normal</span>')
 
             c_sel, c_room, c_bed, c_bp, c_log, c_rc, c_stat, c_not, c_upd, c_del = st.columns(
                 [0.6, 1.1, 1.1, 1.4, 1.0, 1.0, 1.3, 0.8, 0.8, 0.7]
@@ -747,8 +777,7 @@ Documentation Status: Draft entry prepared for nurse review and verification. Ze
                 conf_c1.warning(f"⚠️ Confirm delete **{rec['room']} / {rec['patient_id']}** ({rec['systolic']}/{rec['diastolic']} mmHg)?")
                 if conf_c2.button("✔️ Yes, Delete", key=f"conf_yes_{rec_id}", type="primary"):
                     st.session_state.records = [r for r in st.session_state.records if r["episode_id"] != rec_id]
-                    if pkey in st.session_state.active_episodes:
-                        del st.session_state.active_episodes[pkey]
+                    st.session_state.inputs.pop(pkey, None)
                     st.session_state.confirm_delete_id = None
                     if st.session_state.selected_record_id == rec_id:
                         st.session_state.selected_record_id = None

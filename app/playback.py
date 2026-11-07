@@ -144,12 +144,21 @@ def evaluate_playback_episode(
         items += [(a.time, a) for a in actions if a.time <= clock]
     items.sort(key=lambda x: x[0])
 
-    for item_time, item in items:
+    # Step the clock a minute at a time between items and up to `clock`, so a
+    # deadline event (a missed recheck, an unanswered notification) is stamped
+    # with the minute it fell due, as it would be live, not with the replay's
+    # end. Ticking only at `clock` restamped those events with every new
+    # `clock`, and an escalation counted from such a confirmation never came.
+    last = items[0][0]
+    for item_time, item in items + [(clock, None)]:
+        step = last + timedelta(minutes=1)
+        while step < item_time:
+            events += tracker.tick(step)
+            step += timedelta(minutes=1)
         events += tracker.tick(item_time)
-        events += tracker.observe(item)
-
-    # Advance clock to simulated_now
-    events += tracker.tick(clock)
+        if item is not None:
+            events += tracker.observe(item)
+        last = item_time
 
     latest_r = visible_readings[-1]
     patient_events = [e for e in events if e.patient_id == patient_id]
@@ -293,6 +302,42 @@ def evaluate_unit_view(
             simulated_now=simulated_now,
         )
     return statuses
+
+
+# Which phase needs the unit's attention first: a provider who hasn't answered,
+# then a confirmed episode, then a recheck that's due, then one still counting down.
+_URGENCY = {
+    EpisodePhase.ESCALATED: 0,
+    EpisodePhase.CONFIRMED: 1,
+    EpisodePhase.REPEAT_DUE: 2,
+    EpisodePhase.REPEAT_PENDING: 3,
+    EpisodePhase.RESOLVED: 4,
+}
+
+
+def most_urgent_status(
+    statuses: dict[str, EpisodeStatus],
+    simulated_now: datetime,
+    resolved_for: timedelta,
+) -> EpisodeStatus | None:
+    """The one patient status the app's alert banner should show, or None.
+
+    Ranks by `_URGENCY`; ties go to the patient listed first. A resolved episode
+    counts only for `resolved_for` after it closed, so the banner can report a
+    resolution and then return to routine monitoring. Ranking only: what each
+    phase means is EpisodeTracker's, through evaluate_playback_episode().
+    """
+    candidates = []
+    for order, status in enumerate(statuses.values()):
+        if status.phase not in _URGENCY:
+            continue
+        if status.phase is EpisodePhase.RESOLVED and (
+            status.latest_event is None
+            or simulated_now - status.latest_event.time > resolved_for
+        ):
+            continue
+        candidates.append((_URGENCY[status.phase], order, status))
+    return min(candidates, key=lambda c: c[:2])[2] if candidates else None
 
 
 def generate_sbar_handoff(
