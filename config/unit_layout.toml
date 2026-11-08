@@ -1,0 +1,118 @@
+# The demo's unit view: an illustrative labor and delivery floor, and who is on it.
+# Assume, all of it: not any real unit's layout or census. To adapt it to a real
+# unit, change [floor] and [[beds]]; the app places cards from these numbers only.
+# Synthetic patients only; scenario names are generator fixture labels, not diagnoses.
+
+[floor]
+columns = 4 # Assume: grid columns.
+rows = 3 # Assume: rooms on rows 1 and 3, the corridor on row 2.
+corridor_row = 2
+station = "Nurses' station" # Shown in the corridor.
+
+# One entry per bed, placed on the grid. A shift assigns patients to beds at
+# random, so which room holds which story changes with the seed.
+[[beds]]
+label = "LDR 1"
+row = 1
+column = 1
+
+[[beds]]
+label = "LDR 2"
+row = 1
+column = 2
+
+[[beds]]
+label = "LDR 3"
+row = 1
+column = 3
+
+[[beds]]
+label = "LDR 4"
+row = 1
+column = 4
+
+[[beds]]
+label = "LDR 5"
+row = 3
+column = 1
+
+[[beds]]
+label = "LDR 6"
+row = 3
+column = 2
+
+[[beds]]
+label = "LDR 7"
+row = 3
+column = 3
+
+[[beds]]
+label = "LDR 8"
+row = 3
+column = 4
+
+[shift]
+start = "07:00" # Assume: simulated shift start, 24-hour.
+# Its length is the generator's duration_hours (config/generator.toml).
+# Pitch team (School of Medicine): readings come from the L&D monitors at 15
+# minutes or more apart, and nurses don't take one sooner (see Reading in
+# src/htn_alert/contract.py). Some generator fixtures put a reading 10 minutes
+# after another; the unit view drops any reading closer than this to the
+# patient's previous one, so the floor shows only readings the unit would take.
+min_reading_gap_minutes = 15
+
+# The patients on a shift. Readings come from src/htn_alert/generator.py with
+# the named scenario; `role` is what the demo uses the patient to show, and
+# tests/test_unit_view.py checks each role holds on every seed it tries.
+# `actions = "drawn"`: acknowledgment and dose times drawn from
+# config/workflow.toml's acknowledgment_minutes and medication_minutes, counted
+# from notification (CONFIRMED) and from acknowledgment. Redrawn until the dose
+# comes before the patient's first non-severe reading, so the dose is what the
+# story shows the blood pressure coming down after. No `actions`: nobody responds.
+
+[[patients]]
+role = "treated" # Confirms; the provider acknowledges and a dose is given in time.
+scenario = "persistent_severe"
+actions = "drawn"
+
+[[patients]]
+role = "resolves" # Severe once; the next reading is below the severe range.
+scenario = "nonpersistent_severe"
+
+[[patients]]
+role = "missed_recheck" # No reading at the 15-minute mark: confirms by default.
+scenario = "delayed_or_missing_repeat"
+delayed_repeat_subtype = "missing_early"
+
+[[patients]]
+role = "deadline" # Confirms, nobody responds, and the treatment target passes.
+scenario = "persistent_severe"
+# Story fixture, Assume: the generator's persistent case drops below the severe
+# range at 45 minutes, before the 60-minute target. These replace that reading
+# and the next, so the episode is still open when the target passes.
+[[patients.readings]]
+after_minutes = 45
+systolic = [162, 172]
+diastolic = [106, 114]
+[[patients.readings]]
+after_minutes = 60
+systolic = [161, 170]
+diastolic = [105, 113]
+
+[[patients]]
+role = "reopens" # Closes, then severe again within the hour: the same episode reopens.
+scenario = "recurrent_severe"
+# It confirms on reopening, late in the hour, and with nobody responding it
+# escalates at the lead before the treatment target ([escalation] in protocol.toml).
+
+[[patients]]
+role = "routine"
+scenario = "non_hypertensive"
+
+[[patients]]
+role = "routine"
+scenario = "mild_hypertension"
+
+[[patients]]
+role = "routine"
+scenario = "borderline_severe"

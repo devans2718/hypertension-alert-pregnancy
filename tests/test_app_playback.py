@@ -198,6 +198,20 @@ def test_evaluate_unit_view(test_protocol):
     assert unit["Bed-03"].phase == EpisodePhase.RESOLVED
 
 
+def test_evaluate_unit_view_passes_each_patients_actions(test_protocol):
+    """An acknowledgment reaches only its own patient: that one doesn't escalate."""
+    t0 = datetime(2026, 10, 31, 10, 0)
+    cohort = {
+        bed: [Reading(bed, t0, 168, 112), Reading(bed, t0 + timedelta(minutes=16), 164, 108)]
+        for bed in ("Bed-01", "Bed-02")
+    }
+    actions = {"Bed-01": [Action("Bed-01", t0 + timedelta(minutes=20), ActionKind.PROVIDER_ACKNOWLEDGED)]}
+
+    unit = evaluate_unit_view(cohort, t0 + timedelta(minutes=40), test_protocol, actions)
+    assert unit["Bed-01"].phase == EpisodePhase.CONFIRMED
+    assert unit["Bed-02"].phase == EpisodePhase.ESCALATED
+
+
 def test_generate_sbar_handoff(test_protocol):
     t0 = datetime(2026, 10, 31, 10, 0)
     r1 = Reading(patient_id="P101", time=t0, systolic=165, diastolic=112)
