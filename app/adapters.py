@@ -95,17 +95,15 @@ def project_record_to_readings(
         )
         return [first_reading, repeat_reading]
 
-    # Default: confirmed persistent
-    # If the initial reading is severe, repeat is also severe.
-    # If initial is mild, repeat remains mild.
-    repeat_sys = record.systolic if record.systolic >= 160 else max(record.systolic, 162)
-    repeat_dia = record.diastolic if record.diastolic >= 110 else max(record.diastolic, 108)
-
+    # Default: the repeat keeps the record's own values. A cross-sectional record
+    # has one blood pressure; raising it to the severe range would put invented
+    # numbers on a real dataset's row. A severe record confirms; one that isn't
+    # severe stays as it is.
     repeat_reading = Reading(
         patient_id=patient_id,
         time=start_time + timedelta(minutes=17),
-        systolic=repeat_sys,
-        diastolic=repeat_dia,
+        systolic=record.systolic,
+        diastolic=record.diastolic,
     )
     return [first_reading, repeat_reading]
 
