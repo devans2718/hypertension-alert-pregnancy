@@ -19,12 +19,23 @@ uv sync          # create the environment from the lockfile
 uv run pytest    # run the tests
 ```
 
+## Running the app
+
+To launch the interactive demonstration app (bedside vital signs logging, 15-minute confirmation countdown, and replay timeline):
+
+```
+uv run streamlit run app/streamlit_app.py
+```
+
+![Demonstration App](docs/app_screenshot.png)
+
 New to the project? Work through the [onboarding checklist](docs/onboarding.md).
 
 ## Builders
 
 - Daniel Evans (Data Science), build lead
 - Obed Akwasi Aning
+- Vince Nguyen
 
 ## Status
 

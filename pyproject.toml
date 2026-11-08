@@ -5,7 +5,9 @@ description = "Hack-A-Roo Fall 2026 prototype: severe-hypertension alerting for 
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "streamlit>=1.66.1",
+]
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -19,3 +21,4 @@ packages = ["src/htn_alert"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
