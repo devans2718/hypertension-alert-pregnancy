@@ -44,6 +44,15 @@ def test_layout_places_every_patient_on_its_own_bed(layout):
     assert all(b.row != layout.corridor_row for b in layout.beds)
 
 
+def test_every_bed_carries_its_patients_episode_type(protocol, layout):
+    assert all(p.episode_type for p in layout.patients)
+    shift = build_shift(3, protocol, layout)
+    by_role = {p.role: p.episode_type for p in layout.patients}
+    assert shift.episode_types.keys() == shift.roles.keys()
+    for bed, role in shift.roles.items():
+        assert shift.episode_types[bed] == by_role[role]
+
+
 def test_the_same_seed_gives_the_same_shift(protocol, layout):
     first, second = build_shift(7, protocol, layout), build_shift(7, protocol, layout)
     assert first.roles == second.roles

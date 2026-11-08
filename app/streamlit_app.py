@@ -346,6 +346,8 @@ if "unit_minute" not in st.session_state:
     st.session_state.unit_minute = 0.0
 if "unit_playing" not in st.session_state:
     st.session_state.unit_playing = False
+if "unit_show_types" not in st.session_state:
+    st.session_state.unit_show_types = True
 
 
 @st.cache_data
@@ -365,10 +367,19 @@ def toggle_play():
     st.session_state.unit_playing = not st.session_state.unit_playing
 
 
-def floor_html(shift, statuses, now) -> str:
-    """The floor grid: a card per bed, coloured by phase, and the corridor."""
+def floor_html(shift, statuses, now, show_types: bool) -> str:
+    """The floor grid: a card per bed, coloured by phase, and the corridor.
+
+    With `show_types`, each card also names the SMFM episode type its patient
+    shows, so the curated mix reads as one patient per type.
+    """
     cells = []
     for bed in unit_layout.beds:
+        episode_type = (
+            f'<div style="font-size: 11px; font-style: italic; color: #475569; '
+            f'margin: 1px 0 3px;">{shift.episode_types.get(bed.label, "")}</div>'
+            if show_types else ""
+        )
         status = statuses.get(bed.label)
         phase = status.phase if status else EpisodePhase.NONE
         background, border, label = PHASE_COLOURS[phase]
@@ -379,6 +390,7 @@ def floor_html(shift, statuses, now) -> str:
             background: {background}; border: 2px solid {border}; border-left-width: 7px;
             border-radius: 8px; padding: 8px 10px; min-height: 92px;">
             <div style="font-size: 12px; font-weight: 700; color: #475569;">{bed.label}</div>
+            {episode_type}
             <div style="font-size: 20px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums;">{bp}</div>
             <div style="font-size: 12px; font-weight: 700; color: {label};">{PHASE_LABELS[phase]}</div>
             <div style="font-size: 11.5px; color: #334155; margin-top: 2px;">{note}</div>
@@ -410,6 +422,11 @@ def render_unit_view():
         "through the same episode logic as the bedside view. Staff timings are drawn from "
         "the simulation's stated assumptions; the seed fixes a shift so it can be shown again."
     )
+    st.caption(
+        "An illustrative mix, not a realistic one: one patient for each distinct path through "
+        "SMFM's episode definition (Figure 1, Combs et al. 2022), treated in time or not, plus "
+        "routine patients. On a real unit, which episodes occur depends on the patients."
+    )
     c_seed, c_new, c_play = st.columns([1, 1, 1])
     c_seed.number_input("Shift seed", min_value=0, max_value=99_999, step=1, key="unit_seed")
     c_new.button("🎲 New shift", on_click=new_shift, use_container_width=True)
@@ -417,6 +434,7 @@ def render_unit_view():
         "⏸ Pause" if st.session_state.unit_playing else "▶ Play",
         on_click=toggle_play, use_container_width=True, type="primary",
     )
+    st.toggle("Show episode types", key="unit_show_types")
 
     shift = cached_shift(int(st.session_state.unit_seed))
     total_minutes = int((shift.end - shift.start) / timedelta(minutes=1))
@@ -443,7 +461,7 @@ def render_unit_view():
             <span style="font-size: 12px; font-weight: 700; text-transform: uppercase; color: #94a3b8;">🕒 Simulated time</span>
             <span style="font-size: 24px; font-weight: 800; margin-left: 8px; font-variant-numeric: tabular-nums;">{now:%H:%M}</span>
         </div>""")
-        st.html(floor_html(shift, statuses, now))
+        st.html(floor_html(shift, statuses, now, st.session_state.unit_show_types))
 
         recent = sorted(
             (e for s in statuses.values() for e in s.events), key=lambda e: e.time, reverse=True

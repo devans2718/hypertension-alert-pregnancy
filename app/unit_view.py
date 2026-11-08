@@ -58,6 +58,7 @@ class PatientSpec:
 
     role: str
     scenario: str
+    episode_type: str  # the card's label: which SMFM episode type this patient shows
     delayed_repeat_subtype: str | None = None
     drawn_actions: bool = False
     readings: tuple[FixtureReading, ...] = ()
@@ -85,6 +86,7 @@ class Shift:
     start: datetime
     end: datetime
     roles: dict[str, str]  # bed label -> role
+    episode_types: dict[str, str]  # bed label -> the card's episode-type label
     readings: dict[str, list[Reading]]
     actions: dict[str, list[Action]]
 
@@ -117,6 +119,7 @@ def load_unit_layout(path: Path = LAYOUT_PATH) -> UnitLayout:
         PatientSpec(
             role=p["role"],
             scenario=p["scenario"],
+            episode_type=p["episode_type"],
             delayed_repeat_subtype=p.get("delayed_repeat_subtype"),
             drawn_actions=p.get("actions") == "drawn",
             readings=tuple(
@@ -223,7 +226,7 @@ def build_shift(
 
     beds = list(layout.beds)
     rng.shuffle(beds)
-    roles, readings, actions = {}, {}, {}
+    roles, episode_types, readings, actions = {}, {}, {}, {}
     for index, (spec, bed) in enumerate(zip(layout.patients, beds)):
         stream = generate_bp_readings(
             bed.label, start, seed=seed * 100 + index, scenario=spec.scenario,
@@ -233,6 +236,7 @@ def build_shift(
         stream = _apply_fixture(stream, spec.readings, rng, protocol)
         stream = _spaced(stream, layout.min_reading_gap)
         roles[bed.label] = spec.role
+        episode_types[bed.label] = spec.episode_type
         readings[bed.label] = stream
         if spec.drawn_actions:
             actions[bed.label] = _draw_actions(bed.label, stream, rng, workflow, protocol)
@@ -241,6 +245,7 @@ def build_shift(
         start=start,
         end=start + timedelta(hours=generator.duration_hours),
         roles=roles,
+        episode_types=episode_types,
         readings=readings,
         actions=actions,
     )

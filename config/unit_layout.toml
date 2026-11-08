@@ -61,6 +61,13 @@ start = "07:00" # Assume: simulated shift start, 24-hour.
 # patient's previous one, so the floor shows only readings the unit would take.
 min_reading_gap_minutes = 15
 
+# An illustrative mix, not a realistic one: one patient per distinct path through
+# SMFM's episode definition (Combs et al. 2022, Figure 1; tests/test_smfm_examples.py),
+# with treated-in-time and not as the outcome SMFM's quality metric measures, plus
+# routine patients. `episode_type` is the label the unit view can show on the card.
+# Figure 1's E2 (onset in the emergency department) and H (patient leaves) aren't
+# here: readings from elsewhere and departures never reach this system.
+#
 # The patients on a shift. Readings come from src/htn_alert/generator.py with
 # the named scenario; `role` is what the demo uses the patient to show, and
 # tests/test_unit_view.py checks each role holds on every seed it tries.
@@ -73,20 +80,24 @@ min_reading_gap_minutes = 15
 [[patients]]
 role = "treated" # Confirms; the provider acknowledges and a dose is given in time.
 scenario = "persistent_severe"
+episode_type = "Persistent (SMFM E1): treated in time"
 actions = "drawn"
 
 [[patients]]
 role = "resolves" # Severe once; the next reading is below the severe range.
 scenario = "nonpersistent_severe"
+episode_type = "Not persistent (SMFM A)"
 
 [[patients]]
 role = "missed_recheck" # No reading at the 15-minute mark: confirms by default.
 scenario = "delayed_or_missing_repeat"
+episode_type = "Persistent by default: no recheck in time (SMFM C, D, F, G)"
 delayed_repeat_subtype = "missing_early"
 
 [[patients]]
 role = "deadline" # Confirms, nobody responds, and the treatment target passes.
 scenario = "persistent_severe"
+episode_type = "Persistent (SMFM E1): not treated in time"
 # Story fixture, Assume: the generator's persistent case drops below the severe
 # range at 45 minutes, before the 60-minute target. These replace that reading
 # and the next, so the episode is still open when the target passes.
@@ -102,17 +113,21 @@ diastolic = [105, 113]
 [[patients]]
 role = "reopens" # Closes, then severe again within the hour: the same episode reopens.
 scenario = "recurrent_severe"
+episode_type = "Severe again within the hour: same episode (SMFM B)"
 # It confirms on reopening, late in the hour, and with nobody responding it
 # escalates at the lead before the treatment target ([escalation] in protocol.toml).
 
 [[patients]]
 role = "routine"
 scenario = "non_hypertensive"
+episode_type = "No episode"
 
 [[patients]]
 role = "routine"
 scenario = "mild_hypertension"
+episode_type = "No episode"
 
 [[patients]]
 role = "routine"
 scenario = "borderline_severe"
+episode_type = "No episode"
