@@ -503,7 +503,8 @@ with header_col2:
 st.markdown("---")
 
 
-bedside_tab, unit_tab = st.tabs(["🛏️ Bedside", "🏥 Unit view"])
+# The unit view first: the page opens on the whole floor.
+unit_tab, bedside_tab = st.tabs(["🏥 Unit view", "🛏️ Bedside"])
 
 with unit_tab:
     render_unit_view()
