@@ -103,10 +103,16 @@
         print-color-adjust: exact !important;
       }
 
+      /* Lay the poster out at this width, then scale it to fill the page: 48 in is
+         4608 CSS px, and 36 in is 3456. zoom = 4608 / width; min-height = 3456 / zoom.
+         A wider layout is shorter on the page, so widen it if content spills onto a
+         second page. */
       .poster-canvas {
-        width: 48in !important;
+        width: 1750px !important;
+        max-width: none !important;
+        zoom: 2.6331;
         height: auto !important;
-        min-height: 36in !important;
+        min-height: 1312.5px !important;
         box-shadow: none !important;
         border-radius: 0 !important;
         overflow: visible !important;
