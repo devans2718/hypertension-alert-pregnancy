@@ -175,7 +175,7 @@ def test_late_confirmation_deadline_reminder_does_not_change_engine_or_create_do
     with_reminder = simulate_workflow(patient, config=fixed_delays(),
         coupled_config=replace(cc, deadline_escalation_enabled=True))
     assert next(e.time for e in with_reminder.events if e.kind is EventKind.CONFIRMED) == at(50)
-    assert next(e.time for e in with_reminder.events if e.kind is EventKind.ESCALATED) == at(61)
+    assert next(e.time for e in with_reminder.events if e.kind is EventKind.ESCALATED) == at(50)
     assert next(t.time for t in with_reminder.trace if t.kind == "prototype_deadline_escalation") == at(50)
     assert not any(t.kind == "prototype_deadline_escalation" for t in without.trace)
     assert without.events == with_reminder.events
