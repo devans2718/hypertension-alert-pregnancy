@@ -1,4 +1,4 @@
-"""Severe Hypertension Alert System - Demonstration App.
+"""Hypertension Alert System for Pregnancy - Demonstration App.
 
 Real-time recognition, 15-minute repeat confirmation (fast demo mode: 15m = 10s),
 live flowsheet monitoring across multiple rooms and beds, and automated clinical alerts.
@@ -39,7 +39,7 @@ from htn_alert.protocol import load_protocol
 LOGO = REPO_ROOT / "app" / "assets" / "logo.png"
 
 st.set_page_config(
-    page_title="Severe Hypertension Alert System",
+    page_title="Hypertension Alert System for Pregnancy",
     page_icon=str(LOGO),
     layout="wide",
 )
@@ -485,7 +485,7 @@ header_col1, header_col2 = st.columns([1.3, 1], gap="medium")
 with header_col1:
     logo_col, title_col = st.columns([1, 7], vertical_alignment="center")
     logo_col.image(str(LOGO), width=72)
-    title_col.title("Severe Hypertension Alert System")
+    title_col.title("Hypertension Alert System for Pregnancy")
 
 with header_col2:
     st.html("""
