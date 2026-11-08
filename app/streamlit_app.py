@@ -28,6 +28,7 @@ from app.playback import (
     evaluate_unit_view,
     most_urgent_status,
 )
+from app.llm import draft_note
 from app.unit_view import PHASE_COLOURS, PHASE_LABELS, build_shift, card_note, load_unit_layout
 from htn_alert.contract import Action, ActionKind, EventKind, Reading
 from htn_alert.emr import draft_emr_entry, verify_traceability
@@ -82,6 +83,9 @@ if "selected_record_id" not in st.session_state:
     st.session_state.selected_record_id = None
 if "confirm_delete_id" not in st.session_state:
     st.session_state.confirm_delete_id = None
+if "emr_drafts" not in st.session_state:
+    # Model drafts by (patient, episode events), as app.llm.Draft.
+    st.session_state.emr_drafts = {}
 
 
 # Custom CSS for Tooltips, Progress Bar, and Tables
@@ -744,10 +748,22 @@ with bedside_tab:
                     st.rerun()
 
                 with act_col3.popover("📋 EMR Note Draft", use_container_width=True):
-                    draft = draft_emr_entry(episode_events)
+                    # The template drafts at once; the model only on request, once
+                    # per state of the episode, since this block reruns every second.
+                    key = (pkey, tuple((e.time, e.kind) for e in episode_events))
+                    if st.button("✨ Draft with a model", key=f"emr_model_{pkey}"):
+                        with st.spinner("Drafting…"):
+                            st.session_state.emr_drafts[key] = draft_note(episode_events)
+                    drafted = st.session_state.emr_drafts.get(key)
+                    if drafted:
+                        draft, source = drafted.text, drafted.source
+                    else:
+                        draft, source = draft_emr_entry(episode_events), "template"
                     check = verify_traceability(draft, episode_events)
                     st.markdown("**EMR nursing note draft, from this episode's events**")
-                    st.caption("*Drafted outside the alerting loop, for the nurse to review. Template for now; no model is called yet.*")
+                    st.caption(f"*Drafted outside the alerting loop, for the nurse to review. Source: {source}.*")
+                    if drafted and drafted.passed_over:
+                        st.caption("Passed over: " + "; ".join(drafted.passed_over))
                     st.code(draft, language="markdown")
                     if check.valid:
                         st.caption("✅ Every time and number in the draft traces to an event.")
