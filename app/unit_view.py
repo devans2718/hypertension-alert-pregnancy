@@ -246,14 +246,17 @@ def build_shift(
     )
 
 
-# Card colours by phase: background, border. Matches the bedside badges' hues.
+# Card colours by phase: background, border, label text. Matches the bedside
+# badges' hues. The label is a darker shade than the border, so it reads at
+# 4.8:1 or better against its background; the border colours alone fell as
+# low as 1.3:1 (Routine).
 PHASE_COLOURS = {
-    EpisodePhase.NONE: ("#f0fdf4", "#86efac"),
-    EpisodePhase.RESOLVED: ("#f0fdf4", "#16a34a"),
-    EpisodePhase.REPEAT_PENDING: ("#fefce8", "#eab308"),
-    EpisodePhase.REPEAT_DUE: ("#fff7ed", "#f97316"),
-    EpisodePhase.CONFIRMED: ("#fef2f2", "#dc2626"),
-    EpisodePhase.ESCALATED: ("#fdf2f8", "#9d174d"),
+    EpisodePhase.NONE: ("#f0fdf4", "#86efac", "#15803d"),
+    EpisodePhase.RESOLVED: ("#f0fdf4", "#16a34a", "#15803d"),
+    EpisodePhase.REPEAT_PENDING: ("#fefce8", "#eab308", "#a16207"),
+    EpisodePhase.REPEAT_DUE: ("#fff7ed", "#f97316", "#c2410c"),
+    EpisodePhase.CONFIRMED: ("#fef2f2", "#dc2626", "#b91c1c"),
+    EpisodePhase.ESCALATED: ("#fdf2f8", "#9d174d", "#9d174d"),
 }
 
 PHASE_LABELS = {

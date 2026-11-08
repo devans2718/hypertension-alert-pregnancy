@@ -371,7 +371,7 @@ def floor_html(shift, statuses, now) -> str:
     for bed in unit_layout.beds:
         status = statuses.get(bed.label)
         phase = status.phase if status else EpisodePhase.NONE
-        background, border = PHASE_COLOURS[phase]
+        background, border, label = PHASE_COLOURS[phase]
         reading = status.latest_reading if status else None
         bp = f"{reading.systolic}/{reading.diastolic}" if reading else "—"
         note = card_note(status, now)
@@ -380,7 +380,7 @@ def floor_html(shift, statuses, now) -> str:
             border-radius: 8px; padding: 8px 10px; min-height: 92px;">
             <div style="font-size: 12px; font-weight: 700; color: #475569;">{bed.label}</div>
             <div style="font-size: 20px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums;">{bp}</div>
-            <div style="font-size: 12px; font-weight: 700; color: {border};">{PHASE_LABELS[phase]}</div>
+            <div style="font-size: 12px; font-weight: 700; color: {label};">{PHASE_LABELS[phase]}</div>
             <div style="font-size: 11.5px; color: #334155; margin-top: 2px;">{note}</div>
         </div>""")
     cells.append(f"""<div style="grid-row: {unit_layout.corridor_row}; grid-column: 1 / -1;
