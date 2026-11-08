@@ -98,12 +98,21 @@ def test_no_existing_severe_repeat_returns_none(readings):
 
 
 @pytest.mark.parametrize('subtype', ['delayed', 'missing_early'])
-def test_delayed_subtypes_remain_unsupported_until_episode_integration(subtype):
+def test_delayed_subtypes_run_event_workflow_without_legacy_repeat(subtype):
     readings = generate_bp_readings('P', START, scenario='delayed_or_missing_repeat',
         delayed_repeat_subtype=subtype)
     assert find_severe_repeat_in_window(readings) is None
-    with pytest.raises(ValueError, match='existing severe repeat'):
-        simulate_workflow(readings)
+    from htn_alert.contract import EventKind, ActionKind
+    workflow = simulate_workflow(readings)
+    assert workflow.patient_id == 'P'
+    expected_delay = 16 if subtype == 'delayed' else 30
+    assert workflow.reassessments[0].actual_time == workflow.first_severe_time + timedelta(minutes=expected_delay)
+    assert workflow.reassessments[0].minutes_late == expected_delay - 15
+    assert any(e.kind is EventKind.CONFIRMED for e in workflow.events)
+    assert not any(a.kind is ActionKind.DOSE_GIVEN for a in workflow.actions)
+    assert workflow.medication_time is None
+    # The archival cohort API still describes coverage of its projection mode;
+    # coupled PatientCourse cohorts have separate, complete event accounting.
     result = evaluate_cohort({'P': readings})
     assert result.total_patients == 1
     assert result.supported_patients == 0

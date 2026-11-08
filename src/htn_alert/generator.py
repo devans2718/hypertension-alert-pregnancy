@@ -6,12 +6,15 @@ otherwise; review with clinical mentors before any clinical interpretation.
 """
 
 import random
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from htn_alert.contract import Reading
 from htn_alert.protocol import Protocol, load_protocol
 from htn_alert.rules import is_severe
-from htn_alert.simulation_config import GeneratorConfig, load_generator_config
+from htn_alert.simulation_config import (
+    CourseConfig, GeneratorConfig, load_course_config, load_generator_config,
+)
 
 SCENARIOS = (
     "non_hypertensive",
@@ -23,6 +26,117 @@ SCENARIOS = (
     "delayed_or_missing_repeat",
     "spurious_severe",
 )
+
+
+@dataclass(frozen=True)
+class BPPoint:
+    """An unobserved change in an assumed piecewise-constant BP course."""
+
+    time: datetime
+    systolic: int
+    diastolic: int
+
+
+@dataclass(frozen=True)
+class PatientCourse:
+    """Synthetic truth, never passed to EpisodeTracker or interpreted as data.
+
+    Measurement timing is owned by the workflow. Medication does not modify
+    this exogenous course: there is no assumed drug-response model. Scenario
+    metadata is for reporting only and is never a treatment predicate.
+    """
+
+    patient_id: str
+    start: datetime
+    end: datetime
+    routine_interval_minutes: int
+    minimum_measurement_minutes: int
+    points: tuple[BPPoint, ...]
+    scenario: str = "custom"
+
+    def __post_init__(self):
+        if not self.patient_id.strip() or self.end <= self.start:
+            raise ValueError("Course needs a patient and a positive horizon.")
+        if self.minimum_measurement_minutes <= 0 or self.routine_interval_minutes < self.minimum_measurement_minutes:
+            raise ValueError("Routine interval must respect minimum measurement spacing.")
+        times = [p.time for p in self.points]
+        if not times or times[0] != self.start or times != sorted(set(times)):
+            raise ValueError("Course points must start at start and have unique increasing times.")
+        if any(p.time > self.end or p.systolic <= 0 or p.diastolic <= 0 for p in self.points):
+            raise ValueError("Course points must be positive and inside the horizon.")
+        if any((t - self.start).total_seconds() % 60 for t in [self.end, *times]):
+            raise ValueError("Coupled courses currently use whole-minute timestamps.")
+
+    def sample(self, when: datetime) -> Reading:
+        """Query current truth without random draws or a recorded observation."""
+        if not self.start <= when <= self.end:
+            raise ValueError("Cannot sample outside the course horizon.")
+        point = next(p for p in reversed(self.points) if p.time <= when)
+        return Reading(self.patient_id, when, point.systolic, point.diastolic)
+
+
+def generate_patient_course(
+    patient_id: str, start_time: datetime, scenario: str = "persistent_severe",
+    seed: int = 42, *, routine_interval_minutes: int | None = None,
+    config: GeneratorConfig | None = None, course_config: CourseConfig | None = None,
+    protocol: Protocol | None = None,
+) -> PatientCourse:
+    """Build shared unobserved truth independently of either staff workflow.
+
+    All phase timings and BP samples are sourced assumptions. In particular,
+    spontaneous resolution is exogenous; a dose never manufactures resolution.
+    The old generate_bp_readings() remains an archival fixture API.
+    """
+    config = config if config is not None else load_generator_config()
+    cc = course_config if course_config is not None else load_course_config()
+    protocol = protocol if protocol is not None else load_protocol()
+    if scenario not in SCENARIOS or scenario not in cc.profiles:
+        raise ValueError(f"Unknown course scenario: {scenario}")
+    rng = random.Random(seed)
+    baseline = config.scenario_baselines.get(scenario, (config.baseline_systolic, config.baseline_diastolic))
+    normal = (
+        min(baseline[0] + rng.randint(*config.systolic_variation), protocol.severe_systolic - 1),
+        min(baseline[1] + rng.randint(*config.diastolic_variation), protocol.severe_diastolic - 1),
+    )
+    severe = (
+        max(rng.randint(*config.onset_systolic), protocol.severe_systolic),
+        rng.randint(*config.onset_diastolic),
+    )
+    resolved = (min(cc.resolved_bp[0], protocol.severe_systolic - 1),
+                min(cc.resolved_bp[1], protocol.severe_diastolic - 1))
+    onset = rng.choice(cc.onset_minutes)
+    end = start_time + timedelta(hours=config.duration_hours)
+    points = {start_time: BPPoint(start_time, *normal)}
+    for after, is_high in cc.profiles[scenario]:
+        when = start_time + timedelta(minutes=onset + after)
+        if when <= end:
+            points[when] = BPPoint(when, *(severe if is_high else resolved))
+    cycle = cc.routine_intervals_minutes[0] if routine_interval_minutes is None else routine_interval_minutes
+    return PatientCourse(patient_id, start_time, end, cycle, cc.minimum_measurement_minutes,
+                         tuple(points[t] for t in sorted(points)), scenario)
+
+
+def generate_course_cohort(
+    patients_per_scenario: int = 10, start_time: datetime | None = None, seed: int = 42,
+    *, config: GeneratorConfig | None = None, course_config: CourseConfig | None = None,
+    protocol: Protocol | None = None,
+) -> dict[str, PatientCourse]:
+    """Balance labels and cycle lengths for engineering coverage, not prevalence."""
+    if patients_per_scenario <= 0:
+        raise ValueError("patients_per_scenario must be positive.")
+    cc = course_config if course_config is not None else load_course_config()
+    config = config if config is not None else load_generator_config()
+    protocol = protocol if protocol is not None else load_protocol()
+    start_time = start_time or datetime(2026, 10, 26, 8)
+    result = {}
+    for index, scenario in enumerate(SCENARIOS):
+        for within in range(patients_per_scenario):
+            n = index * patients_per_scenario + within + 1
+            pid = f"SIM-{n:05d}"
+            result[pid] = generate_patient_course(pid, start_time, scenario, seed + n,
+                routine_interval_minutes=cc.routine_intervals_minutes[within % len(cc.routine_intervals_minutes)],
+                config=config, course_config=cc, protocol=protocol)
+    return result
 
 
 def generate_bp_readings(
@@ -183,6 +297,11 @@ def summarize_cohort(
 
 
 if __name__ == "__main__":
+    import sys
+    if "--legacy" not in sys.argv:
+        from htn_alert.simulation_demo import demo
+        demo("generator")
+        raise SystemExit
     start = datetime(2026, 10, 26, 8, 0)
     protocol = load_protocol()
     for i, scenario in enumerate(SCENARIOS, 1):

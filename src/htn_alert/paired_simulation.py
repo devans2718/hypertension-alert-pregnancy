@@ -1,6 +1,10 @@
 
 """Paired baseline-versus-OB-Response workflow simulation.
 
+PatientCourse inputs/default demos share hidden BP truth and exogenous factors,
+while allowing actual measurements to differ. List inputs below preserve the
+archival projected comparison; use course inputs for new event-based results.
+
 Uses identical synthetic patient readings and random seeds
 to compare hypothetical staff workflow outcomes.
 
@@ -19,10 +23,78 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from htn_alert.contract import Reading
-from htn_alert.generator import generate_bp_readings
+from htn_alert.generator import PatientCourse, generate_bp_readings
 from htn_alert.protocol import Protocol, load_protocol
 from htn_alert.simulation_config import WorkflowConfig, load_workflow_config
 from htn_alert.workflow import WorkflowResult, simulate_workflow
+from htn_alert.coupled_workflow import CoupledResult
+from htn_alert.simulation_config import CoupledConfig
+
+
+def _first_trace(result: CoupledResult, kind: str) -> datetime | None:
+    return next((row.time for row in result.trace if row.kind == kind), None)
+
+
+def _optional_difference(baseline: datetime | None, tool: datetime | None) -> float | None:
+    if baseline is None or tool is None:
+        return None
+    return (baseline - tool).total_seconds() / 60
+
+
+@dataclass(frozen=True)
+class CoupledPairedResult:
+    """Shared truth and exogenous factors; actual observations may differ."""
+
+    patient_id: str
+    provider_pathway: str
+    prompt_effect: float
+    baseline: CoupledResult
+    tool: CoupledResult
+
+    @property
+    def recognition_minutes_saved(self) -> float | None:
+        return _optional_difference(_first_trace(self.baseline, "nurse_recognized"),
+                                    _first_trace(self.tool, "nurse_recognized"))
+
+    @property
+    def reassessment_minutes_saved(self) -> float | None:
+        if not self.baseline.reassessments or not self.tool.reassessments:
+            return None
+        return _optional_difference(self.baseline.reassessments[0].actual_time,
+                                    self.tool.reassessments[0].actual_time)
+
+    @property
+    def provider_notification_minutes_saved(self) -> float | None:
+        return _optional_difference(_first_trace(self.baseline, "provider_notified"),
+                                    _first_trace(self.tool, "provider_notified"))
+
+    @property
+    def medication_minutes_saved(self) -> float | None:
+        # Match engine episode identities, not merely each arm's first dose.
+        baseline = self.baseline.evaluation.episodes
+        tool = self.tool.evaluation.episodes
+        if (not baseline or not tool or baseline[0].onset != tool[0].onset
+                or baseline[0].persistent != tool[0].persistent):
+            return None
+        return _optional_difference(baseline[0].dose_time, tool[0].dose_time)
+
+
+def compare_patient_course(
+    course: PatientCourse, provider_pathway: str = "direct", seed: int = 42,
+    prompt_effect: float = 0.5, missing_recheck: bool = False, *,
+    protocol: Protocol | None = None, workflow_config: WorkflowConfig | None = None,
+    coupled_config: CoupledConfig | None = None,
+) -> CoupledPairedResult:
+    """Couple measurement decisions without changing truth or unrelated draws."""
+    protocol = protocol if protocol is not None else load_protocol()
+    workflow_config = workflow_config if workflow_config is not None else load_workflow_config()
+    from htn_alert.simulation_config import load_coupled_config
+    cc = coupled_config if coupled_config is not None else load_coupled_config()
+    baseline = simulate_workflow(course, "baseline", provider_pathway, seed,
+        prompt_effect, missing_recheck, protocol=protocol, config=workflow_config, coupled_config=cc)
+    tool = simulate_workflow(course, "tool", provider_pathway, seed,
+        prompt_effect, missing_recheck, protocol=protocol, config=workflow_config, coupled_config=cc)
+    return CoupledPairedResult(course.patient_id, provider_pathway, prompt_effect, baseline, tool)
 
 
 @dataclass(frozen=True)
@@ -58,7 +130,7 @@ def _minutes_between(later: datetime, earlier: datetime) -> float:
 
 
 def compare_workflows(
-    readings: list[Reading],
+    readings: list[Reading] | PatientCourse,
     provider_pathway: str = "direct",
     seed: int = 42,
     prompt_effect: float = 0.5,
@@ -66,7 +138,8 @@ def compare_workflows(
     *,
     protocol: Protocol | None = None,
     workflow_config: WorkflowConfig | None = None,
-) -> PairedResult:
+    coupled_config: CoupledConfig | None = None,
+) -> PairedResult | CoupledPairedResult:
     """Compare baseline and tool workflows using the same readings.
 
     Random seed and provider pathway are held constant.
@@ -76,6 +149,11 @@ def compare_workflows(
     communication changes using the same recorded severe repeat.
     They must not be attributed to the projected recheck.
     """
+
+    if isinstance(readings, PatientCourse):
+        return compare_patient_course(readings, provider_pathway, seed, prompt_effect,
+            missing_recheck, protocol=protocol, workflow_config=workflow_config,
+            coupled_config=coupled_config)
 
     # Preserve caller-owned data, even if readings are not sorted.
     patient_readings = list(readings)
@@ -103,6 +181,9 @@ def compare_workflows(
         protocol=protocol,
         config=workflow_config,
     )
+
+    if isinstance(baseline, CoupledResult) and isinstance(assisted, CoupledResult):
+        return CoupledPairedResult(baseline.patient_id, provider_pathway, prompt_effect, baseline, assisted)
 
     # Confirm that the two models use identical BP anchors.
     if (
@@ -152,6 +233,11 @@ def compare_workflows(
 
 
 if __name__ == "__main__":
+    import sys
+    if "--legacy" not in sys.argv:
+        from htn_alert.simulation_demo import demo
+        demo("paired_simulation")
+        raise SystemExit
     protocol = load_protocol()
     start = datetime(2026, 10, 26, 8, 0)
 

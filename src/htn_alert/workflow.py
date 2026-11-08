@@ -1,6 +1,10 @@
 
 """Synthetic staff workflow simulation for OB-Response.
 
+PatientCourse inputs and the default console demo use actual coupled tasks
+and Daniel's engine. List inputs retain the archival projection interface
+below; those projections are not the new event-based evaluation.
+
 Designed around Mosaic's latest clinical feedback and the
 revised Hack-A-Roo team plan.
 
@@ -27,12 +31,17 @@ Clinical episode classification belongs to Daniel's rules.
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 from htn_alert.contract import Action, ActionKind, Reading
-from htn_alert.generator import generate_bp_readings
+from htn_alert.generator import BPPoint, PatientCourse, generate_bp_readings
 from htn_alert.protocol import Protocol, load_protocol
 from htn_alert.rules import is_severe
 from htn_alert.simulation_config import WorkflowConfig, load_workflow_config
+
+if TYPE_CHECKING:
+    from htn_alert.coupled_workflow import CoupledResult
+    from htn_alert.simulation_config import CoupledConfig
 
 
 PROVIDER_PATHWAYS = (
@@ -53,7 +62,7 @@ class RecheckPlan:
 
 @dataclass(frozen=True)
 class WorkflowResult:
-    """Simulated staff response using recorded BP observations."""
+    """Archival projected timings; only the actions tuple records completions."""
 
     patient_id: str
     mode: str
@@ -143,6 +152,8 @@ def find_severe_repeat_in_window(
 ) -> Reading | None:
     """Find an existing severe repeat 15–60 min after the first severe BP.
 
+    Deprecated archival fixture selector; the coupled workflow/evaluation
+    never calls this. It is retained for existing projection clients only.
     Bounds come from protocol.toml. This is only simulator input eligibility:
     it does not handle the absence of a below-severe reading within 15 minutes.
     Full persistence and SMFM examples belong to episodes.py in issue #9:
@@ -237,7 +248,7 @@ def simulate_recheck_plan(
 
 
 def simulate_workflow(
-    readings: list[Reading],
+    readings: list[Reading] | PatientCourse,
     mode: str = "baseline",
     provider_pathway: str = "direct",
     seed: int = 42,
@@ -246,10 +257,16 @@ def simulate_workflow(
     *,
     protocol: Protocol | None = None,
     config: WorkflowConfig | None = None,
-) -> WorkflowResult:
+    coupled_config: "CoupledConfig | None" = None,
+) -> "WorkflowResult | CoupledResult":
     """Simulate response to an existing synthetic severe-BP case.
 
-    This initial demonstration requires an already-recorded
+    Pass a PatientCourse for the coupled, event-evaluated simulation (#20).
+    Lists retain the archival projection API; its medication_time is a
+    projection, not proof of a completed dose. Only actions are completions.
+    New experiments should use PatientCourse, not infer truth from observations.
+
+    The archival demonstration uses an already-recorded
     severe repeat 15-60 minutes after first severe BP (configured window).
 
     It is not the complete clinical persistence algorithm.
@@ -257,6 +274,12 @@ def simulate_workflow(
     Provider and medication timelines use that recorded reading.
     Projected recheck delays are reported separately.
     """
+
+    from htn_alert.coupled_workflow import simulate_coupled_workflow
+    if isinstance(readings, PatientCourse):
+        return simulate_coupled_workflow(readings, mode, provider_pathway, seed,
+            prompt_effect, missing_recheck, protocol=protocol, config=config,
+            coupled_config=coupled_config)
 
     if not readings:
         raise ValueError("Readings cannot be empty.")
@@ -303,10 +326,19 @@ def simulate_workflow(
     severe_repeat = find_severe_repeat_in_window(readings, protocol)
 
     if severe_repeat is None:
-        raise ValueError(
-            "No existing severe repeat in the configured "
-            "window for this demonstration; full persistence is issue #9."
-        )
+        # Compatibility replay assumption ONLY: values are held between supplied
+        # observations. A delayed/missing repeat no longer crashes. New paired
+        # experiments must supply independently constructed PatientCourse truth.
+        from htn_alert.simulation_config import load_course_config
+        minimum = load_course_config().minimum_measurement_minutes
+        by_time = {r.time: BPPoint(r.time, r.systolic, r.diastolic) for r in readings}
+        if readings[-1].time == readings[0].time:
+            raise ValueError("Replay requires an observation horizon.")
+        course = PatientCourse(patient_id, readings[0].time, readings[-1].time,
+            minimum, minimum, tuple(by_time[t] for t in sorted(by_time)), "observation_replay")
+        return simulate_coupled_workflow(course, mode, provider_pathway, seed,
+            prompt_effect, missing_recheck, protocol=protocol, config=config,
+            coupled_config=coupled_config, recorded_readings=tuple(readings))
 
     rng = random.Random(seed)
 
@@ -384,6 +416,13 @@ def simulate_workflow(
         ),
     )
 
+    # Do not turn a legacy timing projection into a completed dose after an
+    # observed resolution (issue #20). This path has no latent physiology model.
+    latest = next((r for r in reversed(readings) if r.time <= medication_time), None)
+    if medication_time > readings[-1].time or latest is None or not is_severe(latest, protocol):
+        actions = actions[:1]
+    actions = tuple(a for a in actions if a.time <= readings[-1].time)
+
     return WorkflowResult(
         patient_id=patient_id,
         mode=mode,
@@ -405,6 +444,11 @@ def simulate_workflow(
 
 
 if __name__ == "__main__":
+    import sys
+    if "--legacy" not in sys.argv:
+        from htn_alert.simulation_demo import demo
+        demo("workflow")
+        raise SystemExit
     protocol = load_protocol()
     start = datetime(2026, 10, 26, 8, 0)
 
@@ -484,7 +528,7 @@ if __name__ == "__main__":
                 result.provider_acknowledged_time,
             )
             print(
-                "Medication administered:",
+                "Projected medication time (legacy):",
                 result.medication_time,
             )
             print(

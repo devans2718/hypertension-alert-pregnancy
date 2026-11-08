@@ -50,6 +50,8 @@ src/htn_alert/        core logic
   emr.py              AI-drafted EMR entry and traceability verification
   generator.py        synthetic patients, readings and staff actions
   simulation_config.py loads synthetic generator and workflow assumptions
+  coupled_workflow.py actual measurement tasks and staff actions through EpisodeTracker
+  simulation_demo.py  console views of the coupled synthetic simulation
   evaluate.py         metrics over event streams
 app/                  the demo app
   streamlit_app.py    interactive bedside entry and replay interface

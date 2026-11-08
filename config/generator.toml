@@ -1,5 +1,6 @@
 # Synthetic engineering fixtures, not patient-derived distributions or clinical rules.
-# Every parameter below is Assume: copied from PR #7 to preserve its behavior.
+# Archival fixture values are Assume, retained from PR #7. New course controls
+# below have their own source labels; they are not patient-derived estimates.
 # Severe thresholds and the repeat/treatment windows belong in protocol.toml.
 
 [defaults]
@@ -88,3 +89,28 @@ diastolic = 85 # Assume: fixed fixture value, mmHg.
 after_minutes = 30 # Assume: no earlier repeat is supplied.
 systolic = 135 # Assume: fixed fixture value, mmHg.
 diastolic = 85 # Assume: fixed fixture value, mmHg.
+
+# Coupled model: change points describe an UNOBSERVED course, not measurements.
+# Original readings above remain archival fixtures for compatibility.
+[course]
+routine_intervals_minutes = [15, 30, 60] # Assume: balanced monitoring-cycle experiment; not prevalence.
+minimum_measurement_minutes = 15 # Pitch: Daniel's issue #20 / Reading contract, monitors at least 15 minutes apart.
+onset_minutes = [0] # Assume: initial severe presentation; holds initial detection equal between paired arms.
+resolved_bp = [135, 85] # Assume: exogenous spontaneous resolution, not a drug response, mmHg.
+
+[course.profiles.non_hypertensive]
+phases = [] # Assume: baseline throughout.
+[course.profiles.mild_hypertension]
+phases = [] # Assume: baseline throughout.
+[course.profiles.borderline_severe]
+phases = [] # Assume: baseline throughout, capped below shared severe thresholds.
+[course.profiles.persistent_severe]
+phases = [[0, true]] # Assume: remains severe; no spontaneous or medication-induced resolution.
+[course.profiles.nonpersistent_severe]
+phases = [[0, true], [15, false]] # Assume: spontaneous resolution; label does not determine observed classification.
+[course.profiles.recurrent_severe]
+phases = [[0, true], [15, false], [45, true], [75, false]] # Assume: recurrent course, classification delegated to tracker.
+[course.profiles.delayed_or_missing_repeat]
+phases = [[0, true], [90, false]] # Assume: a course allowing delayed reassessment; independent of workflow completion.
+[course.profiles.spurious_severe]
+phases = [[0, true], [15, false]] # Assume: observationally identical to transient BP; no artifact detector.
