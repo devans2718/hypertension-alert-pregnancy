@@ -54,17 +54,22 @@ src/htn_alert/        core logic
   simulation_demo.py  console views of the coupled synthetic simulation
   evaluate.py         metrics over event streams
 app/                  the demo app
-  streamlit_app.py    interactive bedside entry and replay interface
+  streamlit_app.py    the demo: bedside entry tab and unit view tab
   playback.py         reading replay, countdown, and episode state helpers
+  unit_view.py        seeded shifts of synthetic patients for the unit view
+  llm.py              EMR note drafting: local model (Ollama), then Claude
   adapters.py         open-data baseline loader and scenario projector
   scenarios.py        pre-configured clinical test scenarios
-data/                 open benchmark baseline data (de-identified, MIT)
+  assets/             the team logo (Tabler gauge icon, MIT; see its README)
+data/                 open benchmark baseline data (de-identified, CC BY 4.0; see data/README.md)
   public_baseline.csv de-identified UCI/Kaggle maternal risk dataset
   README.md           dataset source and attribution
 tests/                pytest tests
+scripts/              one-off checks, e.g. compare_emr_drafters.py
 config/protocol.toml  clinical thresholds, repeat window, escalation times
 config/generator.toml synthetic BP fixtures and explicit delayed-repeat subtypes
 config/workflow.toml  assumed staff delays, separate from clinical targets
+config/unit_layout.toml illustrative floor and the unit view's patients
 notes/                your own scratch notes; ignored by Git, never committed
 ```
 

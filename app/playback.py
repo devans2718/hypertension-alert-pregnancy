@@ -289,17 +289,22 @@ def evaluate_unit_view(
     cohort_readings: dict[str, list[Reading]],
     simulated_now: datetime,
     protocol: Protocol,
+    cohort_actions: dict[str, list[Action]] | None = None,
 ) -> dict[str, EpisodeStatus]:
     """Evaluate current episode status across all patients on the unit at `simulated_now`.
 
-    Plain, testable unit view function as specified in Issue #18.
+    Plain, testable unit view function as specified in Issue #18. Staff actions
+    are optional, keyed like the readings; without them, no one acknowledges or
+    treats, so every confirmed episode runs on to escalation.
     """
+    cohort_actions = cohort_actions or {}
     statuses: dict[str, EpisodeStatus] = {}
     for patient_id, readings in cohort_readings.items():
         statuses[patient_id] = evaluate_playback_episode(
             readings=readings,
             protocol=protocol,
             simulated_now=simulated_now,
+            actions=cohort_actions.get(patient_id),
         )
     return statuses
 
