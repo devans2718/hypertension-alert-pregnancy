@@ -510,14 +510,12 @@
         <div class="card">
           <div class="card-title"><span class="icon">📊</span> 2. Datasets & Synthetic Stream Modeling</div>
           <p>
-            Per clinical research safety rules, the system operates strictly on <strong>open benchmark data and
-              reproducible synthetic streams</strong> (Zero real patient PHI):
+            Results use <strong>synthetic patients</strong>. No protected health information is used.
           </p>
 
           <div class="info-box">
-            <strong>Open Maternal Benchmark (UCI Repository):</strong> 1,014 de-identified clinical records across Age,
-            Systolic BP, Diastolic BP, Glucose, Temp, and Heart Rate (Ahmed et al., 2020; DOI: 10.24432/C5DP5D, CC BY
-            4.0).
+            Prototype also includes a loader and benchmark patient scenario for UCI's Maternal Health Risk dataset
+            (1,014 records; Ahmed et al., 2020; CC BY 4.0).
           </div>
 
           <p><strong>8-Scenario Synthetic Patient Generator (<code>generator.py</code>):</strong></p>
@@ -533,10 +531,6 @@
           </ul>
 
           <div class="metric-grid" style="margin-top: 6px;">
-            <div class="metric-box">
-              <div class="metric-value">1,014</div>
-              <div class="metric-label">UCI Benchmark Records</div>
-            </div>
             <div class="metric-box">
               <div class="metric-value">8 Scenarios</div>
               <div class="metric-label">Synthetic Patient Profiles</div>
