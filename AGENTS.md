@@ -60,6 +60,7 @@ app/                  the demo app
   llm.py              EMR note drafting: local model (Ollama), then Claude
   adapters.py         open-data baseline loader and scenario projector
   scenarios.py        pre-configured clinical test scenarios
+  assets/             the team logo (Tabler gauge icon, MIT; see its README)
 data/                 open benchmark baseline data (de-identified, CC BY 4.0; see data/README.md)
   public_baseline.csv de-identified UCI/Kaggle maternal risk dataset
   README.md           dataset source and attribution

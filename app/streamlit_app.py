@@ -35,9 +35,12 @@ from htn_alert.emr import draft_emr_entry, verify_traceability
 from htn_alert.protocol import load_protocol
 
 # Page Configuration
+# The team's logo (app/assets/README.md): the browser tab's icon and the title's.
+LOGO = REPO_ROOT / "app" / "assets" / "logo.png"
+
 st.set_page_config(
     page_title="Severe Hypertension Alert System",
-    page_icon="🩺",
+    page_icon=str(LOGO),
     layout="wide",
 )
 
@@ -480,7 +483,9 @@ def render_unit_view():
 header_col1, header_col2 = st.columns([1.3, 1], gap="medium")
 
 with header_col1:
-    st.title("🩺 Severe Hypertension Alert System")
+    logo_col, title_col = st.columns([1, 7], vertical_alignment="center")
+    logo_col.image(str(LOGO), width=72)
+    title_col.title("Severe Hypertension Alert System")
 
 with header_col2:
     st.html("""
