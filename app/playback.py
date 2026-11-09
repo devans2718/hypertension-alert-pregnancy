@@ -285,6 +285,16 @@ def evaluate_playback_episode(
     )
 
 
+def current_episode_events(status: EpisodeStatus) -> list[Event]:
+    """The events of the patient's latest episode, from its EPISODE_OPENED on.
+
+    A patient's event list covers every episode they've had; the alert banner and
+    the EMR draft are about the current one only.
+    """
+    opened_at = max(i for i, e in enumerate(status.events) if e.kind is EventKind.EPISODE_OPENED)
+    return status.events[opened_at:]
+
+
 def evaluate_unit_view(
     cohort_readings: dict[str, list[Reading]],
     simulated_now: datetime,
