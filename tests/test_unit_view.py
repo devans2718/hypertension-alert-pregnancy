@@ -6,11 +6,16 @@ the treatment deadline"), and the readings and staff timings are random. These
 tests replay many seeds through EpisodeTracker and check each promise holds.
 """
 
+from datetime import timedelta
+
 import pytest
 
-from app.playback import EpisodePhase, evaluate_unit_view
+from streamlit.testing.v1 import AppTest
+
+from app.playback import EpisodePhase, current_episode_events, evaluate_unit_view
 from app.unit_view import build_shift, card_note, load_unit_layout
 from htn_alert.contract import EventKind
+from htn_alert.emr import draft_emr_entry, verify_traceability
 from htn_alert.protocol import load_protocol
 
 SEEDS = range(200)
@@ -119,3 +124,36 @@ def test_card_note_shows_a_passed_target_for_the_deadline_bed(protocol, layout):
     status = evaluate_unit_view(shift.readings, now, protocol, shift.actions)[bed]
     assert status.phase is EpisodePhase.ESCALATED
     assert card_note(status, now).startswith("Treatment target passed")
+
+
+def test_every_bed_can_fill_the_episode_panel(protocol, layout):
+    """The panel assumes an active episode has confirmed and a resolved one has closed,
+    and offers the template's note; each has to hold for any bed, at any point in a shift."""
+    for seed in range(20):
+        shift = build_shift(seed, protocol, layout)
+        minutes = int((shift.end - shift.start) / timedelta(minutes=1))
+        for minute in range(0, minutes + 1, 5):
+            now = shift.start + timedelta(minutes=minute)
+            statuses = evaluate_unit_view(shift.readings, now, protocol, shift.actions)
+            for status in statuses.values():
+                if status.phase is EpisodePhase.NONE:
+                    continue
+                events = current_episode_events(status)
+                if status.phase in (EpisodePhase.CONFIRMED, EpisodePhase.ESCALATED):
+                    assert any(e.kind is EventKind.CONFIRMED for e in events)
+                if status.phase is EpisodePhase.RESOLVED:
+                    assert status.latest_event.kind is EventKind.EPISODE_CLOSED
+                if any(e.kind is EventKind.CONFIRMED for e in events):
+                    assert verify_traceability(draft_emr_entry(events), events).valid
+
+
+@pytest.mark.parametrize("minute", [0, 92, 300])
+def test_app_opens_every_bed_without_an_error(layout, minute):
+    """Runs the real app with each bed open, since the panel only exists when it renders."""
+    for bed in layout.beds:
+        app = AppTest.from_file("../app/streamlit_app.py", default_timeout=30)
+        app.session_state["unit_minute"] = float(minute)
+        app.session_state["unit_bed"] = bed.label
+        app.run()
+        assert not app.exception, (bed.label, minute, app.exception)
+        assert any(m.value == f"#### {bed.label}" for m in app.markdown)

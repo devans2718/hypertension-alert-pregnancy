@@ -24,6 +24,7 @@ import streamlit as st
 from app.playback import (
     EpisodePhase,
     calculate_countdown,
+    current_episode_events,
     evaluate_playback_episode,
     evaluate_unit_view,
     most_urgent_status,
@@ -33,6 +34,7 @@ from app.unit_view import PHASE_COLOURS, PHASE_LABELS, build_shift, card_note, l
 from htn_alert.contract import Action, ActionKind, EventKind, Reading
 from htn_alert.emr import draft_emr_entry, verify_traceability
 from htn_alert.protocol import load_protocol
+from htn_alert.rules import is_severe
 
 # Page Configuration
 # The team's logo (app/assets/README.md): the browser tab's icon and the title's.
@@ -224,19 +226,8 @@ def patient_status(patient_key: str, now: datetime):
     )
 
 
-def current_episode_events(status) -> list:
-    """The events of the patient's latest episode, from its EPISODE_OPENED on.
-
-    A patient's event list covers every episode they've had; the banner and the
-    EMR draft are about the current one only.
-    """
-    opened_at = max(i for i, e in enumerate(status.events) if e.kind is EventKind.EPISODE_OPENED)
-    return status.events[opened_at:]
-
-
-def onset_reading(patient_key: str, opened) -> Reading | None:
+def onset_reading(readings: list[Reading], opened) -> Reading | None:
     """The reading that opened an episode: the one logged at EPISODE_OPENED's time."""
-    readings = st.session_state.inputs[patient_key]["readings"]
     return next((r for r in readings if r.time == opened.time), None)
 
 
@@ -340,6 +331,160 @@ def apply_reset():
 
 
 # =============================================================================
+# THE EPISODE PANEL: one patient's alert, staff response and EMR note, in both tabs
+# =============================================================================
+def bp(reading) -> str:
+    return f"{reading.systolic}/{reading.diastolic}" if reading else "—"
+
+
+def hhmm(t) -> str:
+    return t.strftime("%H:%M") if t else "—"
+
+
+def severe_banner(title: str, detail: str, footer: str):
+    st.html(f"""<div class="alert-box-severe">
+        <div style="font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px;">
+            <span>🚨</span>
+            <span>{title}</span>
+        </div>
+        <div style="font-size: 13.5px; margin-top: 6px; font-weight: 500; line-height: 1.45;">
+            {detail}
+        </div>
+        <div style="font-size: 11.5px; color: #b91c1c; margin-top: 4px; font-weight: 600;">
+            {footer}
+        </div>
+    </div>""")
+
+
+def render_emr_draft(pkey: str, episode_events: list):
+    """The EMR note popover for one episode.
+
+    The template drafts at once; the model only on request, once per state of
+    the episode, since this block reruns every second.
+    """
+    with st.popover("📋 EMR Note Draft", use_container_width=True):
+        key = (pkey, tuple((e.time, e.kind) for e in episode_events))
+        if st.button("✨ Draft with a model", key=f"emr_model_{pkey}"):
+            with st.spinner("Drafting…"):
+                st.session_state.emr_drafts[key] = draft_note(episode_events)
+        drafted = st.session_state.emr_drafts.get(key)
+        if drafted:
+            draft, source = drafted.text, drafted.source
+        else:
+            draft, source = draft_emr_entry(episode_events), "template"
+        check = verify_traceability(draft, episode_events)
+        st.markdown("**EMR nursing note draft, from this episode's events**")
+        st.caption(f"*Drafted outside the alerting loop, for the nurse to review. Source: {source}.*")
+        if drafted and drafted.passed_over:
+            st.caption("Passed over: " + "; ".join(drafted.passed_over))
+        st.code(draft, language="markdown", wrap_lines=True)
+        if check.valid:
+            st.caption("✅ Every time and number in the draft traces to an event.")
+        else:
+            st.caption("⚠️ Not traceable to an event: " + ", ".join(check.untraceable_items))
+
+
+def render_episode_panel(status, now, readings, actions, routine_note: str, on_action=None):
+    """One patient's alert, staff response and EMR note: the same panel in both tabs.
+
+    With `on_action(patient_key, kind)`, staff respond through its buttons, as on
+    the Bedside tab. Without it the panel is read-only, as on the Unit view, whose
+    staff actions come from the shift. `actions` may hold a shift's future actions,
+    so only those that have happened by `now` count.
+    """
+    if status is not None and status.phase in (EpisodePhase.CONFIRMED, EpisodePhase.ESCALATED):
+        pkey = status.patient_id
+        episode_events = current_episode_events(status)
+        onset = episode_events[0]
+        confirmed = next(e for e in episode_events if e.kind is EventKind.CONFIRMED)
+        dose = next((e for e in episode_events if e.kind is EventKind.DOSE_RECORDED), None)
+        acked = any(
+            a.kind is ActionKind.PROVIDER_ACKNOWLEDGED and onset.time <= a.time <= now
+            for a in actions
+        )
+        _, target_passed, left = calculate_countdown(status.treatment_target_time, now)
+
+        if status.phase is EpisodePhase.ESCALATED:
+            title = f"ESCALATED, NOTIFICATION NOT ANSWERED: {pkey}"
+        else:
+            title = f"PERSISTENT SEVERE HYPERTENSION CONFIRMED: {pkey}"
+        target_line = (
+            f"Treatment target passed at {hhmm(status.treatment_target_time)} ({left})."
+            if target_passed
+            else f"Treatment target: {hhmm(status.treatment_target_time)}, {TREATMENT_MINUTES} minutes from onset ({left} left)."
+        )
+        severe_banner(
+            title,
+            f"First severe reading {bp(onset_reading(readings, onset))} mmHg at {hhmm(onset.time)}. "
+            f"Confirmed at {hhmm(confirmed.time)}: {confirmed.detail}; provider notified. "
+            + (f"Dose recorded at {hhmm(dose.time)}." if dose else target_line),
+            f"Confirmed: {hhmm(confirmed.time)}",
+        )
+
+        # Staff actions go to the episode logic as Actions; an acknowledgment or
+        # a dose stops the escalation timer.
+        act_col1, act_col2, act_col3 = st.columns(3)
+        if acked or dose:
+            act_col1.success("✅ Provider responded")
+        elif on_action is None:
+            act_col1.info("📟 No provider response yet")
+        elif act_col1.button("📟 Provider Acknowledged", use_container_width=True):
+            on_action(pkey, ActionKind.PROVIDER_ACKNOWLEDGED)
+            st.rerun()
+        if dose:
+            act_col2.success(f"✅ Dose recorded ({hhmm(dose.time)})")
+        elif on_action is None:
+            act_col2.info("💊 No dose recorded yet")
+        elif act_col2.button("💊 Record Medication Dose", use_container_width=True, type="secondary"):
+            on_action(pkey, ActionKind.DOSE_GIVEN)
+            st.rerun()
+        with act_col3:
+            render_emr_draft(pkey, episode_events)
+
+    elif status is not None and status.phase is EpisodePhase.REPEAT_DUE:
+        onset = current_episode_events(status)[0]
+        severe_banner(
+            f"REPEAT BLOOD PRESSURE DUE: {status.patient_id}",
+            f"{REPEAT_MIN_MINUTES} minutes since the first severe reading ({bp(onset_reading(readings, onset))} mmHg at {hhmm(onset.time)}). "
+            f"Without a reading below the severe range in this minute, the episode confirms as persistent "
+            f"and the provider is notified.",
+            f"Due: {hhmm(status.repeat_target_time)}",
+        )
+
+    elif status is not None and status.phase is EpisodePhase.REPEAT_PENDING:
+        onset = current_episode_events(status)[0]
+        _, _, left = calculate_countdown(status.repeat_target_time, now)
+        severe_banner(
+            f"CRITICAL SEVERE ALERT: {status.patient_id}",
+            f"Severe blood pressure {bp(onset_reading(readings, onset))} mmHg detected (≥160/110 threshold). "
+            f"Repeat reading due at {hhmm(status.repeat_target_time)} ({left} left).",
+            f"Alert Time: {hhmm(onset.time)}",
+        )
+
+    elif status is not None and status.phase is EpisodePhase.RESOLVED:
+        closed = status.latest_event
+        st.html(f"""<div class="alert-box-normal">
+            <div style="font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+                <span>🟢</span>
+                <span>EPISODE RESOLVED: {status.patient_id}</span>
+            </div>
+            <div style="font-size: 13px; margin-top: 4px;">
+                Reading {bp(status.latest_reading)} mmHg: {closed.detail} (at {hhmm(closed.time)}).
+                A severe reading within {REPEAT_MAX_MINUTES} minutes of onset reopens the episode.
+            </div>
+        </div>""")
+        # A closed episode that had confirmed still has its note to review.
+        episode_events = current_episode_events(status)
+        if any(e.kind is EventKind.CONFIRMED for e in episode_events):
+            render_emr_draft(status.patient_id, episode_events)
+    else:
+        st.html(f"""<div class="alert-box-normal">
+            <span style="font-weight: 700;">🟢 Routine Monitoring</span>
+            <span style="font-size: 13px; margin-left: 8px;">{routine_note}</span>
+        </div>""")
+
+
+# =============================================================================
 # UNIT VIEW: a seeded shift of synthetic patients replayed on the floor layout
 # =============================================================================
 unit_layout = load_unit_layout()
@@ -418,6 +563,39 @@ EVENT_WORDS = {
 }
 
 
+def render_bed_detail(shift, statuses, now):
+    """The bed picked from the floor: the Bedside tab's panel, plus its readings and events.
+
+    Read-only, since this shift's staff actions are simulated.
+    """
+    label = st.pills("Open a bed", [bed.label for bed in unit_layout.beds], key="unit_bed")
+    if label is None:
+        return
+    status = statuses.get(label)
+    if status is None:
+        st.caption(f"No patient in {label} this shift.")
+        return
+    st.markdown(f"#### {label}")
+    if shift.episode_types.get(label):
+        st.caption(shift.episode_types[label])
+    readings = [r for r in shift.readings[label] if r.time <= now]
+    render_episode_panel(
+        status, now, readings, shift.actions.get(label, []), routine_note=status.detail,
+    )
+    readings_col, events_col = st.columns(2)
+    with readings_col:
+        st.markdown("**Readings so far**")
+        for r in reversed(readings[-8:]):
+            flag = " 🚨" if is_severe(r, protocol) else ""
+            st.markdown(f"`{r.time:%H:%M}` {bp(r)} mmHg{flag}")
+    with events_col:
+        st.markdown("**Episode events**")
+        for e in reversed(status.events):
+            st.markdown(f"`{e.time:%H:%M}` {EVENT_WORDS[e.kind]}")
+        if not status.events:
+            st.caption("None yet.")
+
+
 def render_unit_view():
     """The unit tab: shift controls, the replay clock, the floor and recent events."""
     st.caption(
@@ -465,6 +643,7 @@ def render_unit_view():
             <span style="font-size: 24px; font-weight: 800; margin-left: 8px; font-variant-numeric: tabular-nums;">{now:%H:%M}</span>
         </div>""")
         st.html(floor_html(shift, statuses, now, st.session_state.unit_show_types))
+        render_bed_detail(shift, statuses, now)
 
         recent = sorted(
             (e for s in statuses.values() for e in s.events), key=lambda e: e.time, reverse=True
@@ -666,26 +845,6 @@ with bedside_tab:
                 if status is not None:
                     statuses[r["patient_key"]] = status
 
-            def bp(reading) -> str:
-                return f"{reading.systolic}/{reading.diastolic}" if reading else "—"
-
-            def hhmm(t) -> str:
-                return t.strftime("%H:%M") if t else "—"
-
-            def severe_banner(title: str, detail: str, footer: str):
-                st.html(f"""<div class="alert-box-severe">
-                    <div style="font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px;">
-                        <span>🚨</span>
-                        <span>{title}</span>
-                    </div>
-                    <div style="font-size: 13.5px; margin-top: 6px; font-weight: 500; line-height: 1.45;">
-                        {detail}
-                    </div>
-                    <div style="font-size: 11.5px; color: #b91c1c; margin-top: 4px; font-weight: 600;">
-                        {footer}
-                    </div>
-                </div>""")
-
             # ---------------------------------------------------------------------
             # 1. TOP-RIGHT ALERT SPACE: Evaluates Highest Priority Clinical Alert
             # ---------------------------------------------------------------------
@@ -728,109 +887,12 @@ with bedside_tab:
                 {f'<div style="font-size: 14px; font-weight: 600; color: #fde68a; margin-top: 2px;">{upcoming}</div>' if upcoming else ""}
             </div>""")
 
-            if top is not None and top.phase in (EpisodePhase.CONFIRMED, EpisodePhase.ESCALATED):
-                pkey = top.patient_id
-                episode_events = current_episode_events(top)
-                onset = episode_events[0]
-                confirmed = next(e for e in episode_events if e.kind is EventKind.CONFIRMED)
-                dose = next((e for e in episode_events if e.kind is EventKind.DOSE_RECORDED), None)
-                acked = any(
-                    a.kind is ActionKind.PROVIDER_ACKNOWLEDGED and a.time >= onset.time
-                    for a in st.session_state.inputs[pkey]["actions"]
-                )
-                _, target_passed, left = calculate_countdown(top.treatment_target_time, now)
-
-                if top.phase is EpisodePhase.ESCALATED:
-                    title = f"ESCALATED, NOTIFICATION NOT ANSWERED: {pkey}"
-                else:
-                    title = f"PERSISTENT SEVERE HYPERTENSION CONFIRMED: {pkey}"
-                target_line = (
-                    f"Treatment target passed at {hhmm(top.treatment_target_time)} ({left})."
-                    if target_passed
-                    else f"Treatment target: {hhmm(top.treatment_target_time)}, {TREATMENT_MINUTES} minutes from onset ({left} left)."
-                )
-                severe_banner(
-                    title,
-                    f"First severe reading {bp(onset_reading(pkey, onset))} mmHg at {hhmm(onset.time)}. "
-                    f"Confirmed at {hhmm(confirmed.time)}: {confirmed.detail}; provider notified. "
-                    + (f"Dose recorded at {hhmm(dose.time)}." if dose else target_line),
-                    f"Confirmed: {hhmm(confirmed.time)}",
-                )
-
-                # Staff actions go to the episode logic as Actions; an acknowledgment or
-                # a dose stops the escalation timer.
-                act_col1, act_col2, act_col3 = st.columns(3)
-                if acked or dose:
-                    act_col1.success("✅ Provider responded")
-                elif act_col1.button("📟 Provider Acknowledged", use_container_width=True):
-                    record_action(pkey, ActionKind.PROVIDER_ACKNOWLEDGED)
-                    st.rerun()
-                if dose:
-                    act_col2.success(f"✅ Dose recorded ({hhmm(dose.time)})")
-                elif act_col2.button("💊 Record Medication Dose", use_container_width=True, type="secondary"):
-                    record_action(pkey, ActionKind.DOSE_GIVEN)
-                    st.rerun()
-
-                with act_col3.popover("📋 EMR Note Draft", use_container_width=True):
-                    # The template drafts at once; the model only on request, once
-                    # per state of the episode, since this block reruns every second.
-                    key = (pkey, tuple((e.time, e.kind) for e in episode_events))
-                    if st.button("✨ Draft with a model", key=f"emr_model_{pkey}"):
-                        with st.spinner("Drafting…"):
-                            st.session_state.emr_drafts[key] = draft_note(episode_events)
-                    drafted = st.session_state.emr_drafts.get(key)
-                    if drafted:
-                        draft, source = drafted.text, drafted.source
-                    else:
-                        draft, source = draft_emr_entry(episode_events), "template"
-                    check = verify_traceability(draft, episode_events)
-                    st.markdown("**EMR nursing note draft, from this episode's events**")
-                    st.caption(f"*Drafted outside the alerting loop, for the nurse to review. Source: {source}.*")
-                    if drafted and drafted.passed_over:
-                        st.caption("Passed over: " + "; ".join(drafted.passed_over))
-                    st.code(draft, language="markdown")
-                    if check.valid:
-                        st.caption("✅ Every time and number in the draft traces to an event.")
-                    else:
-                        st.caption("⚠️ Not traceable to an event: " + ", ".join(check.untraceable_items))
-
-            elif top is not None and top.phase is EpisodePhase.REPEAT_DUE:
-                onset = current_episode_events(top)[0]
-                severe_banner(
-                    f"REPEAT BLOOD PRESSURE DUE: {top.patient_id}",
-                    f"{REPEAT_MIN_MINUTES} minutes since the first severe reading ({bp(onset_reading(top.patient_id, onset))} mmHg at {hhmm(onset.time)}). "
-                    f"Without a reading below the severe range in this minute, the episode confirms as persistent "
-                    f"and the provider is notified.",
-                    f"Due: {hhmm(top.repeat_target_time)}",
-                )
-
-            elif top is not None and top.phase is EpisodePhase.REPEAT_PENDING:
-                onset = current_episode_events(top)[0]
-                _, _, left = calculate_countdown(top.repeat_target_time, now)
-                severe_banner(
-                    f"CRITICAL SEVERE ALERT: {top.patient_id}",
-                    f"Severe blood pressure {bp(onset_reading(top.patient_id, onset))} mmHg detected (≥160/110 threshold). "
-                    f"Repeat reading due at {hhmm(top.repeat_target_time)} ({left} left).",
-                    f"Alert Time: {hhmm(onset.time)}",
-                )
-
-            elif top is not None and top.phase is EpisodePhase.RESOLVED:
-                closed = top.latest_event
-                st.html(f"""<div class="alert-box-normal">
-                    <div style="font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
-                        <span>🟢</span>
-                        <span>EPISODE RESOLVED: {top.patient_id}</span>
-                    </div>
-                    <div style="font-size: 13px; margin-top: 4px;">
-                        Reading {bp(top.latest_reading)} mmHg: {closed.detail} (at {hhmm(closed.time)}).
-                        A severe reading within {REPEAT_MAX_MINUTES} minutes of onset reopens the episode.
-                    </div>
-                </div>""")
-            else:
-                st.html("""<div class="alert-box-normal">
-                    <span style="font-weight: 700;">🟢 Routine Monitoring</span>
-                    <span style="font-size: 13px; margin-left: 8px;">All monitored patient vitals within target reference range.</span>
-                </div>""")
+            entered = st.session_state.inputs.get(top.patient_id, {}) if top else {}
+            render_episode_panel(
+                top, now, entered.get("readings", []), entered.get("actions", []),
+                routine_note="All monitored patient vitals within target reference range.",
+                on_action=record_action,
+            )
 
             # ---------------------------------------------------------------------
             # 2. MULTI-PATIENT RECORD TABLE (With Select, Notice, Update, Delete)
