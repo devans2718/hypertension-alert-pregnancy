@@ -377,7 +377,7 @@ def render_emr_draft(pkey: str, episode_events: list):
         st.caption(f"*Drafted outside the alerting loop, for the nurse to review. Source: {source}.*")
         if drafted and drafted.passed_over:
             st.caption("Passed over: " + "; ".join(drafted.passed_over))
-        st.code(draft, language="markdown")
+        st.code(draft, language="markdown", wrap_lines=True)
         if check.valid:
             st.caption("✅ Every time and number in the draft traces to an event.")
         else:
